@@ -1,5 +1,5 @@
 #! /usr/bin/env bash
 
-parallel bash scripts/clone-or-pull.sh {} "third_party/{/.}" :::: list.md
+parallel --colsep ' ' bash scripts/clone-or-pull.sh {1} "third_party/{1/.}" :::: list.md
 
-parallel bash scripts/parse.sh {/.} :::: list.md
+parallel --colsep ' ' bash scripts/parse.sh {1/.} {2} :::: list.md
