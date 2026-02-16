@@ -5,18 +5,78 @@ description: Skills for agents to consume for nvidia-resiliency-ext
 third_party/nvidia-resiliency-ext/src/nvidia_resiliency_ext/inprocess/attribution.py
 def format_interruption_records(records):
 
-third_party/nvidia-resiliency-ext/src/nvidia_resiliency_ext/inprocess/wrap.py
-def reserve_fn(state, store, progress_watchdog, progress_watchdog_interval):
+third_party/nvidia-resiliency-ext/src/nvidia_resiliency_ext/testing_utils/health_check_injector.py
+def set_current_cycle(cycle: int) -> None:
+    """
+    Set the current rendezvous cycle for injection checking.
+    This should be called by the rendezvous handler before health checks.
+    Args:
+        cycle: The current rendezvous round/cycle number.
+    """
+    global _current_cycle
+    _current_cycle = cycle
+class HealthCheckInjector:
+    """Manages GPU health check failure injection for testing purposes."""
+    def __init__(self):
+def _get_injector() -> Optional[HealthCheckInjector]:
+    """Get the global health check injector instance, or None if not enabled."""
+    global _injector
+    if _injector is None and os.environ.get("NVRX_INJECT_GPU_FAILURE"):
+def _monkey_patch_gpu_health_check():
 
 third_party/nvidia-resiliency-ext/src/nvidia_resiliency_ext/inprocess/state.py
 def freeze_dataclass(cls):
 
-third_party/nvidia-resiliency-ext/src/nvidia_resiliency_ext/inprocess/monitor_process.py
-def is_process_active(process):
-def terminate_process(
-    process: psutil.Process, termination_grace_time: datetime.timedelta, log: logging.Logger
+third_party/nvidia-resiliency-ext/src/nvidia_resiliency_ext/inprocess/compose.py
+def find_common_ancestor(*instances):
+
+third_party/nvidia-resiliency-ext/src/nvidia_resiliency_ext/checkpointing/utils.py
+def logger_stack(name: Optional[str] = None, current_logger: Optional[logging.Logger] = None):
+def debug_time(
+    name: str, logger: Optional[logging.Logger] = None, threshold: float = float("-inf"), level=None
 ):
-def daemonize_fn(fn, fn_args=(), fn_kwargs=None):
+def debug_msg(msg: str):
+def preload_tensors(state_dict: Dict, non_blocking=True):
+def _disable_gc():
+def wrap_for_async(fn):
+def diff(x1: Any, x2: Any, prefix: Tuple = ()) -> Tuple[list, list, list]:
+    """Recursive diff of dicts.
+    Args:
+        x1 (object):
+def dict_list_map_outplace(f: Callable[[U], V], x: Union[Dict, List, U]) -> Union[Dict, List, V]:
+    """Maps dicts and lists *out-of-place* with a given function."""
+    if isinstance(x, dict):
+
+third_party/nvidia-resiliency-ext/src/nvidia_resiliency_ext/inprocess/wrap.py
+def reserve_fn(state, store, progress_watchdog, progress_watchdog_interval):
+
+third_party/nvidia-resiliency-ext/src/nvidia_resiliency_ext/inprocess/rank_assignment.py
+def bounded_activate(node, counter, path=None, current_state=None):
+def propagate_terminations(node, terminated_ranks):
+
+third_party/nvidia-resiliency-ext/src/nvidia_resiliency_ext/inprocess/tools/inject_fault.py
+def register_fault(fault_name_or_enum: Union[str, Fault], handler: Callable):
+def dispatch_fault_injection(fault, delay, callback):
+def async_raise(tid, exc_type):
+def termination_signal_handler(signum, frame):
+def workload_exception(delay, callback):
+def maybe_raise_workload_exception():
+def clear_workload_exception():
+def async_raise_exception(tid, delay, callback):
+def raise_gpu_error(delay, callback):
+def gpu_sleep(delay, device, callback):
+def lock_gil(delay, callback):
+def segfault(delay, callback):
+def send_signal(pid, signal, delay, callback):
+def abort(delay, callback):
+def inject_fault(
+    faults: tuple[Fault],
+    num_faults: int | tuple[int, int],
+    keep_alive: int,
+    delay: float | tuple[float, float],
+    seed: int,
+    callback: Optional[Callable[[], Any]] = None,
+):
 
 third_party/nvidia-resiliency-ext/src/nvidia_resiliency_ext/inprocess/utils.py
 def torch_older_than(version):
@@ -29,11 +89,32 @@ def _log_exec(target, offset=3):
 def log_exec(target):
 def find_nearest_handler(logger, handler_cls):
 
+third_party/nvidia-resiliency-ext/src/nvidia_resiliency_ext/checkpointing/local/replication/_torch_future.py
+def call_with_only_valid_kwargs(fn, **kwargs):
+def object_to_tensor(obj, current_device=None, group=None):
+def tensor_to_object(tensor, tensor_size, group=None):
+def send_object_list(object_list, dst, group=None, device=None):
+def recv_object_list(object_list, src=None, group=None, device=None):
+
 third_party/nvidia-resiliency-ext/src/nvidia_resiliency_ext/inprocess/monitor_thread.py
 def async_raise(tid, exc_type, event=None):
 def delayed_async_raise(tid, exc_type):
 def reraise_if_unraisable(exc_type):
 def async_abort_main_thread(msg=None):
+
+third_party/nvidia-resiliency-ext/src/nvidia_resiliency_ext/inprocess/monitor_process.py
+def is_process_active(process):
+def terminate_process(
+    process: psutil.Process, termination_grace_time: datetime.timedelta, log: logging.Logger
+):
+def daemonize_fn(fn, fn_args=(), fn_kwargs=None):
+
+third_party/nvidia-resiliency-ext/src/nvidia_resiliency_ext/checkpointing/local/replication/utils.py
+def zip_strict(*args):
+
+third_party/nvidia-resiliency-ext/src/nvidia_resiliency_ext/checkpointing/local/replication/group_utils.py
+def batched(iterable, n):
+def parse_group_sequence(replication_jump, replication_factor, world_size):
 
 third_party/nvidia-resiliency-ext/src/nvidia_resiliency_ext/inprocess/param_utils.py
 def check_type(annotation, cls):
@@ -43,12 +124,235 @@ def enforce_subclass(argument, class_or_tuple):
 def enforce_type(argument, class_or_tuple):
 def enforce_value(condition):
 
-third_party/nvidia-resiliency-ext/src/nvidia_resiliency_ext/inprocess/compose.py
-def find_common_ancestor(*instances):
+third_party/nvidia-resiliency-ext/src/nvidia_resiliency_ext/checkpointing/async_ckpt/filesystem_async.py
+def _get_write_results_queue():
+def _split_by_size_and_type(bins: int, items: List[WriteItem]) -> List[List[WriteItem]]:
+    """
+    Splits write items according to item size into close to uniform bins.
+    Same as torch.distributed.checkpoint.filesystem._split_by_size_and_type,
+    but with a fixed _item_size function.
+    Args:
+        bins (int):
+def _split_by_separation_hint(
+    buckets: List[List[WriteItem]], separation_hint: Optional[str] = None
+) -> Dict[str, List[List[WriteItem]]]:
+    """
+    Splits buckets into those whose keys begin with the separation_hint and those whose keys do not
+    Args:
+        buckets (List[List[WriteItem]]):
+def _item_size(item: WriteItem) -> int:
+    """
+    Calculates size (in bytes) of a single write item.
+    Same as torch.distributed.checkpoint.filesystem._item_size,
+    but fixes computing chunk size (with item.tensor_data.chunk.sizes)
+    Args:
+        item (WriteItem):
+def _process_memory() -> int:
+    """
+    Get memory used by current process.
+    Returns (int):
 
-third_party/nvidia-resiliency-ext/src/nvidia_resiliency_ext/inprocess/rank_assignment.py
-def bounded_activate(node, counter, path=None, current_state=None):
-def propagate_terminations(node, terminated_ranks):
+third_party/nvidia-resiliency-ext/src/nvidia_resiliency_ext/checkpointing/local/replication/torch_device_utils.py
+def get_default_device_from_type(device_type: str) -> torch.device:
+    """Returns the default PyTorch device based on the specified device type.
+    This function maps a device type string to the corresponding PyTorch device.
+    It supports both "cpu" and "cuda" types, raising an error for unsupported types.
+    Args:
+        device_type (str):
+
+third_party/nvidia-resiliency-ext/src/nvidia_resiliency_ext/attribution/straggler/dist_utils.py
+def all_gather_object(obj, group):
+def get_world_size(group):
+def get_rank(group):
+def get_device_for_backend(group):
+def all_reduce(tensor, op=torch.distributed.ReduceOp.SUM, group=None, async_op=False):
+def gather_on_rank0(tensor, group=None):
+
+third_party/nvidia-resiliency-ext/src/nvidia_resiliency_ext/attribution/utils.py
+def capture_logs(logger_name=None):
+def capture_stdout(logger_name=None):
+
+third_party/nvidia-resiliency-ext/src/nvidia_resiliency_ext/checkpointing/local/basic_state_dict.py
+def nested_values(x: Union[dict, list]):
+def dict_list_map_inplace(f, x):
+
+third_party/nvidia-resiliency-ext/src/nvidia_resiliency_ext/ptl_resiliency/_utils.py
+def is_module_available(module: str) -> bool:
+    import importlib
+    return importlib.util.find_spec(module) is not None
+@dataclass
+class SimulatedFaultParams:
+    """
+    Description of a simulated rank fault, used for FT testing and debugging.
+    Simulated fault types are:
+    - 'rank_killed' a rank is killed with SIGKILL
+    - 'rank_hung' a rank is stopped with SIGSTOP
+    - 'random' randomly selects one of the above faults.
+    Fault delay is computed as:
+    - `base_delay` + RAND_FLOAT_FROM_0.0_to_1.0 * `rand_delay`
+    Attributes:
+        fault_type (str):
+def parse_simulated_fault_params(simulated_fault_params) -> Optional[SimulatedFaultParams]:
+    if simulated_fault_params is None:
+        return None
+    if isinstance(simulated_fault_params, SimulatedFaultParams):
+def setup_simulated_fault(fault_desc: SimulatedFaultParams):
+
+third_party/nvidia-resiliency-ext/src/nvidia_resiliency_ext/attribution/trace_analyzer/fr_attribution.py
+def eprint(*args, **kwargs):
+def main():
+
+third_party/nvidia-resiliency-ext/src/nvidia_resiliency_ext/attribution/combined_log_fr/combined_log_fr.py
+def main():
+
+third_party/nvidia-resiliency-ext/src/nvidia_resiliency_ext/checkpointing/async_ckpt/core.py
+def abort_nvrx_checkpoint():
+
+third_party/nvidia-resiliency-ext/src/nvidia_resiliency_ext/checkpointing/async_ckpt/state_dict_saver.py
+def _compare_dataclasses(obj1, obj2):
+def init_checkpoint_metadata_cache(cached_global_metadata: Metadata = None):
+def get_metadata_caching_status():
+def save_state_dict_async_plan(
+    state_dict: STATE_DICT_TYPE,
+    storage_writer: 'FileSystemWriterAsync',
+    process_group: Optional[dist.ProcessGroup] = None,
+    coordinator_rank: int = 0,
+    planner: Optional[Union[SavePlanner, DefaultSavePlanner]] = None,
+    enable_cache: bool = False,
+    metadata_cache: Optional[CheckpointMetadataCache] = None,
+) -> Tuple['FileSystemWriterAsync', Union[Metadata, None], _DistWrapper]:
+    """
+    First stage of saving a state dict to storage.
+    This is an async adjustment of torch.distributed.checkpoint.state_dict_saver.
+    In order to support async save, saving should be split into three parts:
+    1. Planning
+    2. Actual saving
+    3. Finalization
+    Out of these, step (2) *must* happen asynchronously.
+    The first step is realized with this function.
+    The planning part consists of several steps, described here:
+    https://pytorch.org/docs/stable/distributed.checkpoint.html#torch.distributed.checkpoint.SavePlanner
+    Args:
+        state_dict (STATE_DICT_TYPE):
+def verify_global_md_reuse(
+    loaded_all_plans: List[SavePlan], local_plan: SavePlan, rank: int, dist_wrapper: _DistWrapper
+) -> bool:
+    """
+    Verifies that global metadata reuse is possible by checking the loaded plans from the
+     checkpoint are consistent, which means we have the same settings when resuming training.
+    Args:
+        loaded_all_plans: List[SavePlan], The loaded plans from the checkpoint
+         (stored in checkpoint metadata).
+        local_plan: SavePlan, The local save plan.
+        rank: Current process rank.
+        dist_wrapper (_DistWrapper):
+def save_state_dict_async_finalize(
+    storage_writer: 'FileSystemWriterAsync', global_metadata: Metadata, dist_wrapper: _DistWrapper
+) -> None:
+    """
+    Finalization of save_state_dict_async_plan.
+    The input arguments are the same as the save_state_dict_async_plan output,
+    the `write_results` are retrieved from the storage_writer.
+    Args:
+        storage_writer (FileSystemWriterAsync):
+
+third_party/nvidia-resiliency-ext/src/nvidia_resiliency_ext/attribution/mcp_integration/server_launcher.py
+def main():
+
+third_party/nvidia-resiliency-ext/src/nvidia_resiliency_ext/attribution/log_analyzer/nvrx_logsage.py
+def lines_after(lines, needle):
+def chunk_logs_strict(lines):
+def main():
+
+third_party/nvidia-resiliency-ext/src/nvidia_resiliency_ext/shared_utils/log_aggregator.py
+def main():
+
+third_party/nvidia-resiliency-ext/src/nvidia_resiliency_ext/shared_utils/storage_probe.py
+def _storage_path_probe(paths: Optional[list[str]] = None) -> dict:
+    """
+    Probe a list of paths and return a dict with keys: invalid, missing, unreadable.
+    This function is invoked inside a short-lived subprocess to avoid hangs on
+    remote filesystems access.
+    """
+    invalid: list[str] = []
+    missing: list[str] = []
+    unreadable: list[str] = []
+    if not paths:
+        logger.debug("storage probe invoked with no paths; treating as success")
+        return {"invalid": invalid, "missing": missing, "unreadable": unreadable}
+    for p in paths:
+        # Skip None and empty strings
+        if not p:
+            continue
+        # Ensure p is a string (defensive check)
+        if not isinstance(p, str):
+
+third_party/nvidia-resiliency-ext/src/nvidia_resiliency_ext/attribution/mcp_integration/module_definitions.py
+def register_all_modules():
+def create_args_from_dict(module_name: str, config: dict) -> argparse.Namespace:
+    """
+    Create an argparse.Namespace from a configuration dictionary.
+    Args:
+        module_name: Name of the module
+        config: Configuration dictionary
+    Returns:
+        argparse.Namespace with module configuration
+    """
+    metadata = global_registry.get_module_metadata(module_name)
+    if not metadata:
+        raise ValueError(f"Module '{module_name}' not found in registry")
+    # Get schema defaults
+    schema = metadata.input_schema
+    properties = schema.get("properties", {})
+    # Build args with defaults
+    args_dict = {}
+    for prop_name, prop_schema in properties.items():
+
+third_party/nvidia-resiliency-ext/src/nvidia_resiliency_ext/attribution/mcp_integration/registry.py
+def serialize_result(result: Any) -> str:
+    """Serialize attribution result to JSON string."""
+    if result is None:
+        return json.dumps(None)
+    if is_dataclass(result):
+
+third_party/nvidia-resiliency-ext/src/nvidia_resiliency_ext/shared_utils/health_check.py
+def _run_shell(cmd: str, timeout: int = 55) -> tuple[int, str, str]:
+    try:
+        proc = subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=timeout)
+        return proc.returncode, proc.stdout or "", proc.stderr or ""
+    except subprocess.TimeoutExpired as e:
+        return -9, e.stdout or "", e.stderr or "timeout"
+    except Exception as e:
+        return -1, "", str(e)
+# Adds basic thread safety, allowing to run health checks from multiple threads.
+# This is needed for rendezvous unit tests. NOTE: It will work as long as each
+# function/method that uses NVML performs NVML initialization and shutdown.
+# Please follow this pattern when adding new code.
+_nvml_lock = threading.RLock()
+def with_pynvml_lock(func):
+
+third_party/nvidia-resiliency-ext/src/nvidia_resiliency_ext/shared_utils/os_utils.py
+def validate_directory(dir_path: str) -> None:
+    """
+    Validate that a directory is safe for file operations.
+    This function performs comprehensive security checks to ensure the directory
+    is safe from symlink attacks and has appropriate permissions.
+    Args:
+        dir_path: Path to the directory to validate
+    Raises:
+        OSError: If the directory is unsafe or inaccessible
+    """
+    if not os.path.exists(dir_path):
+def validate_filepath(file_path: str) -> None:
+    """
+    Validate that a file path is safe for file operations.
+    This function checks that the file (if it exists) is not a symlink and is a regular file.
+    Args:
+        file_path: Path to the file to validate
+    Raises:
+        OSError: If the file is unsafe or inaccessible
+    """
+    if os.path.exists(file_path):
 
 third_party/nvidia-resiliency-ext/src/nvidia_resiliency_ext/shared_utils/wait_daemon.py
 def wait_for_pids(pids: List[int]) -> None:
@@ -83,389 +387,50 @@ def wait_daemon(pidfile: str) -> None:
     if not os.path.exists(pidfile):
 def main():
 
-third_party/nvidia-resiliency-ext/src/nvidia_resiliency_ext/shared_utils/health_check.py
-def _run_shell(cmd: str, timeout: int = 55) -> tuple[int, str, str]:
-    try:
-        proc = subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=timeout)
-        return proc.returncode, proc.stdout or "", proc.stderr or ""
-    except subprocess.TimeoutExpired as e:
-        return -9, e.stdout or "", e.stderr or "timeout"
-    except Exception as e:
-        return -1, "", str(e)
-# Adds basic thread safety, allowing to run health checks from multiple threads.
-# This is needed for rendezvous unit tests. NOTE: It will work as long as each
-# function/method that uses NVML performs NVML initialization and shutdown.
-# Please follow this pattern when adding new code.
-_nvml_lock = threading.RLock()
-def with_pynvml_lock(func):
-
-third_party/nvidia-resiliency-ext/src/nvidia_resiliency_ext/testing_utils/health_check_injector.py
-def set_current_cycle(cycle: int) -> None:
-    """
-    Set the current rendezvous cycle for injection checking.
-    This should be called by the rendezvous handler before health checks.
+third_party/nvidia-resiliency-ext/src/nvidia_resiliency_ext/fault_tolerance/dict_utils.py
+def extract_matching_values(
+    x: Union[dict, list],
+    predicate: Callable[[Any], bool],
+    return_lists_as_dicts: bool = False,
+) -> Tuple[Union[dict, list], Union[dict, list]]:
+    """Return matching and nonmatching values. Keeps hierarchy.
     Args:
-        cycle: The current rendezvous round/cycle number.
-    """
-    global _current_cycle
-    _current_cycle = cycle
-class HealthCheckInjector:
-    """Manages GPU health check failure injection for testing purposes."""
-    def __init__(self):
-def _get_injector() -> Optional[HealthCheckInjector]:
-    """Get the global health check injector instance, or None if not enabled."""
-    global _injector
-    if _injector is None and os.environ.get("NVRX_INJECT_GPU_FAILURE"):
-def _monkey_patch_gpu_health_check():
-
-third_party/nvidia-resiliency-ext/src/nvidia_resiliency_ext/inprocess/tools/inject_fault.py
-def register_fault(fault_name_or_enum: Union[str, Fault], handler: Callable):
-def dispatch_fault_injection(fault, delay, callback):
-def async_raise(tid, exc_type):
-def termination_signal_handler(signum, frame):
-def workload_exception(delay, callback):
-def maybe_raise_workload_exception():
-def clear_workload_exception():
-def async_raise_exception(tid, delay, callback):
-def raise_gpu_error(delay, callback):
-def gpu_sleep(delay, device, callback):
-def lock_gil(delay, callback):
-def segfault(delay, callback):
-def send_signal(pid, signal, delay, callback):
-def abort(delay, callback):
-def inject_fault(
-    faults: tuple[Fault],
-    num_faults: int | tuple[int, int],
-    keep_alive: int,
-    delay: float | tuple[float, float],
-    seed: int,
-    callback: Optional[Callable[[], Any]] = None,
-):
-
-third_party/nvidia-resiliency-ext/src/nvidia_resiliency_ext/shared_utils/log_aggregator.py
-def main():
-
-third_party/nvidia-resiliency-ext/src/nvidia_resiliency_ext/shared_utils/grpc_log_server.py
-def serve(host: str, port: int, max_workers: int = 100, graceful_shutdown_timeout: float = 60.0):
-def main():
-
-third_party/nvidia-resiliency-ext/src/nvidia_resiliency_ext/ptl_resiliency/_utils.py
-def is_module_available(module: str) -> bool:
-    import importlib
-    return importlib.util.find_spec(module) is not None
-@dataclass
-class SimulatedFaultParams:
-    """
-    Description of a simulated rank fault, used for FT testing and debugging.
-    Simulated fault types are:
-    - 'rank_killed' a rank is killed with SIGKILL
-    - 'rank_hung' a rank is stopped with SIGSTOP
-    - 'random' randomly selects one of the above faults.
-    Fault delay is computed as:
-    - `base_delay` + RAND_FLOAT_FROM_0.0_to_1.0 * `rand_delay`
-    Attributes:
-        fault_type (str):
-def parse_simulated_fault_params(simulated_fault_params) -> Optional[SimulatedFaultParams]:
-    if simulated_fault_params is None:
-        return None
-    if isinstance(simulated_fault_params, SimulatedFaultParams):
-def setup_simulated_fault(fault_desc: SimulatedFaultParams):
-
-third_party/nvidia-resiliency-ext/src/nvidia_resiliency_ext/attribution/utils.py
-def capture_logs(logger_name=None):
-def capture_stdout(logger_name=None):
-
-third_party/nvidia-resiliency-ext/src/nvidia_resiliency_ext/attribution/combined_log_fr/combined_log_fr.py
-def main():
-
-third_party/nvidia-resiliency-ext/src/nvidia_resiliency_ext/shared_utils/storage_probe.py
-def _storage_path_probe(paths: Optional[list[str]] = None) -> dict:
-    """
-    Probe a list of paths and return a dict with keys: invalid, missing, unreadable.
-    This function is invoked inside a short-lived subprocess to avoid hangs on
-    remote filesystems access.
-    """
-    invalid: list[str] = []
-    missing: list[str] = []
-    unreadable: list[str] = []
-    if not paths:
-        logger.debug("storage probe invoked with no paths; treating as success")
-        return {"invalid": invalid, "missing": missing, "unreadable": unreadable}
-    for p in paths:
-        # Skip None and empty strings
-        if not p:
-            continue
-        # Ensure p is a string (defensive check)
-        if not isinstance(p, str):
-
-third_party/nvidia-resiliency-ext/src/nvidia_resiliency_ext/attribution/trace_analyzer/fr_attribution.py
-def eprint(*args, **kwargs):
-def main():
-
-third_party/nvidia-resiliency-ext/src/nvidia_resiliency_ext/shared_utils/os_utils.py
-def validate_directory(dir_path: str) -> None:
-    """
-    Validate that a directory is safe for file operations.
-    This function performs comprehensive security checks to ensure the directory
-    is safe from symlink attacks and has appropriate permissions.
-    Args:
-        dir_path: Path to the directory to validate
-    Raises:
-        OSError: If the directory is unsafe or inaccessible
-    """
-    if not os.path.exists(dir_path):
-def validate_filepath(file_path: str) -> None:
-    """
-    Validate that a file path is safe for file operations.
-    This function checks that the file (if it exists) is not a symlink and is a regular file.
-    Args:
-        file_path: Path to the file to validate
-    Raises:
-        OSError: If the file is unsafe or inaccessible
-    """
-    if os.path.exists(file_path):
-
-third_party/nvidia-resiliency-ext/src/nvidia_resiliency_ext/checkpointing/utils.py
-def logger_stack(name: Optional[str] = None, current_logger: Optional[logging.Logger] = None):
-def debug_time(
-    name: str, logger: Optional[logging.Logger] = None, threshold: float = float("-inf"), level=None
-):
-def debug_msg(msg: str):
-def preload_tensors(state_dict: Dict, non_blocking=True):
-def _disable_gc():
-def wrap_for_async(fn):
+        x (Union[dict, list]) :
 def diff(x1: Any, x2: Any, prefix: Tuple = ()) -> Tuple[list, list, list]:
     """Recursive diff of dicts.
     Args:
         x1 (object):
-def dict_list_map_outplace(f: Callable[[U], V], x: Union[Dict, List, U]) -> Union[Dict, List, V]:
-    """Maps dicts and lists *out-of-place* with a given function."""
-    if isinstance(x, dict):
-
-third_party/nvidia-resiliency-ext/src/nvidia_resiliency_ext/attribution/straggler/dist_utils.py
-def all_gather_object(obj, group):
-def get_world_size(group):
-def get_rank(group):
-def get_device_for_backend(group):
-def all_reduce(tensor, op=torch.distributed.ReduceOp.SUM, group=None, async_op=False):
-def gather_on_rank0(tensor, group=None):
-
-third_party/nvidia-resiliency-ext/src/nvidia_resiliency_ext/attribution/mcp_integration/module_definitions.py
-def register_all_modules():
-def create_args_from_dict(module_name: str, config: dict) -> argparse.Namespace:
-    """
-    Create an argparse.Namespace from a configuration dictionary.
-    Args:
-        module_name: Name of the module
-        config: Configuration dictionary
-    Returns:
-        argparse.Namespace with module configuration
-    """
-    metadata = global_registry.get_module_metadata(module_name)
-    if not metadata:
-        raise ValueError(f"Module '{module_name}' not found in registry")
-    # Get schema defaults
-    schema = metadata.input_schema
-    properties = schema.get("properties", {})
-    # Build args with defaults
-    args_dict = {}
-    for prop_name, prop_schema in properties.items():
-
-third_party/nvidia-resiliency-ext/src/nvidia_resiliency_ext/shared_utils/log_manager.py
-def setup_logger(
-    node_local_tmp_dir=None,
-    force_reset=False,
-    node_local_tmp_prefix: str = None,
-    log_file: Optional[str] = None,
-) -> logging.Logger:
-    """
-    Setup the distributed logger.
-    This function configures the standard Python logger "nvrx" with appropriate
-    handlers for distributed logging. It's safe to call multiple times - if the
-    logger is already configured, it won't be reconfigured unless force_reset=True.
-    The expectation is that this function is called once at the start of the program,
-    and then the logger is used throughout the program i.e. its a singleton.
-    The logger automatically adapts to distributed or regular mode based on
-    whether NVRX_NODE_LOCAL_TMPDIR is set. If set, enables distributed logging
-    with aggregation. If not set, logs go directly to stderr/stdout.
-    The logger is fork-safe: all ranks use file-based message passing to ensure
-    child processes can log even when they don't inherit the aggregator thread.
-    Args:
-        node_local_tmp_dir: Optional directory path for temporary files. If None, uses NVRX_NODE_LOCAL_TMPDIR env var.
-        force_reset: If True, force reconfiguration even if logger is already configured.
-                    Useful for subprocesses that need fresh logger setup.
-        node_local_tmp_prefix: Optional prefix for log files (e.g. "ftlauncher").
-        log_file: Optional path to log file. When specified, logs are written to this file
-                 with rank prefixes (like srun -l) instead of console. All processes write
-                 to the same file using append mode for safe concurrent writes.
-    Returns:
-        logging.Logger: Configured logger instance
-    Example:
-        # In main script (launcher.py) or training subprocess
-        from nvidia_resiliency_ext.shared_utils.log_manager import setup_logger
-        logger = setup_logger()
-        # With log file for consolidated logging across all ranks/nodes
-        logger = setup_logger(log_file="/path/to/base.log")
-        # In subprocesses that need fresh logger setup
-        logger = setup_logger(force_reset=True)
-        # In other modules
-        import logging
-        logger = logging.getLogger(LogConfig.name)
-        logger.info("Some message")
-    """
-    # Check if the nvrx logger is already configured
-    logger = logging.getLogger(LogConfig.name)
-    # If force_reset is True or the logger has no handlers, configure it
-    if force_reset or not logger.handlers:
-        # Clear existing handlers if force_reset is True
-        if force_reset:
-            for handler in logger.handlers[:]:
-                logger.removeHandler(handler)
-            # Clear any stored log manager to force fresh creation
-            if hasattr(setup_logger, '_log_manager'):
-
-third_party/nvidia-resiliency-ext/src/nvidia_resiliency_ext/attribution/mcp_integration/registry.py
-def serialize_result(result: Any) -> str:
-    """Serialize attribution result to JSON string."""
-    if result is None:
-        return json.dumps(None)
-    if is_dataclass(result):
-
-third_party/nvidia-resiliency-ext/src/nvidia_resiliency_ext/fault_tolerance/ft_rendezvous_barrier.py
-def _rdzv_signal_exception_handler(sig: int, frame: Optional[FrameType]) -> None:
-    del frame
-    raise SignalException(f"Received signal {sig} during rendezvous", signal.Signals(sig))
-def _install_rdzv_signal_handlers() -> Dict[signal.Signals, Any]:
-    prev_handlers: Dict[signal.Signals, Any] = {}
-    for sig_to_handle in (signal.SIGTERM, signal.SIGINT):
-def _restore_rdzv_signal_handlers(prev_handlers: Dict[signal.Signals, Any]) -> None:
-    for sig_to_handle, handler in prev_handlers.items():
-def get_method_name(depth=2):
-def _parse_domain_id_from_nvidia_smi() -> str:
-    """Parse domain ID from GPU using nvidia-smi to query ClusterUUID.
-    The ClusterUUID serves as the domain identifier.
-    All GPUs in the same NVLink domain share the same ClusterUUID.
-    Returns:
-        The ClusterUUID as the domain ID string.
-    Raises:
-        RuntimeError: If ClusterUUID cannot be retrieved.
-    Example:
-        >>> domain_id = _parse_domain_id_from_nvidia_smi()
-        >>> # domain_id is "abc9829a-d4c8-491c-8da5-ad28fb34876b"
-    """
-    import subprocess
-    try:
-        # Run nvidia-smi to query ClusterUUID
-        result = subprocess.run(
-            ['nvidia-smi', '-q'],
-            capture_output=True,
-            text=True,
-            timeout=10,
-            check=False,
-        )
-        if result.returncode != 0:
-            raise RuntimeError(
-                f"nvidia-smi command failed with return code {result.returncode}. "
-                f"stderr: {result.stderr}"
-            )
-        # Parse output to find ClusterUUID
-        cluster_uuid = None
-        for line in result.stdout.split('\n'):
-
-third_party/nvidia-resiliency-ext/src/nvidia_resiliency_ext/checkpointing/local/replication/_torch_future.py
-def call_with_only_valid_kwargs(fn, **kwargs):
-def object_to_tensor(obj, current_device=None, group=None):
-def tensor_to_object(tensor, tensor_size, group=None):
-def send_object_list(object_list, dst, group=None, device=None):
-def recv_object_list(object_list, src=None, group=None, device=None):
-
-third_party/nvidia-resiliency-ext/src/nvidia_resiliency_ext/attribution/mcp_integration/server_launcher.py
-def main():
-
-third_party/nvidia-resiliency-ext/src/nvidia_resiliency_ext/checkpointing/local/replication/torch_device_utils.py
-def get_default_device_from_type(device_type: str) -> torch.device:
-    """Returns the default PyTorch device based on the specified device type.
-    This function maps a device type string to the corresponding PyTorch device.
-    It supports both "cpu" and "cuda" types, raising an error for unsupported types.
-    Args:
-        device_type (str):
-
-third_party/nvidia-resiliency-ext/src/nvidia_resiliency_ext/checkpointing/async_ckpt/filesystem_async.py
-def _get_write_results_queue():
-def _split_by_size_and_type(bins: int, items: List[WriteItem]) -> List[List[WriteItem]]:
-    """
-    Splits write items according to item size into close to uniform bins.
-    Same as torch.distributed.checkpoint.filesystem._split_by_size_and_type,
-    but with a fixed _item_size function.
-    Args:
-        bins (int):
-def _split_by_separation_hint(
-    buckets: List[List[WriteItem]], separation_hint: Optional[str] = None
-) -> Dict[str, List[List[WriteItem]]]:
-    """
-    Splits buckets into those whose keys begin with the separation_hint and those whose keys do not
-    Args:
-        buckets (List[List[WriteItem]]):
-def _item_size(item: WriteItem) -> int:
-    """
-    Calculates size (in bytes) of a single write item.
-    Same as torch.distributed.checkpoint.filesystem._item_size,
-    but fixes computing chunk size (with item.tensor_data.chunk.sizes)
-    Args:
-        item (WriteItem):
-def _process_memory() -> int:
-    """
-    Get memory used by current process.
-    Returns (int):
-
-third_party/nvidia-resiliency-ext/src/nvidia_resiliency_ext/fault_tolerance/per_cycle_logs.py
-def _should_filter_line(line: str) -> bool:
-    """
-    Filter out noisy lines that clutter logs but provide no useful information.
-    Currently filters:
-    - Nvidia driver /proc/devices dumps on process exit (Character/Block devices listings)
-    Optimized for minimal overhead:
-    - Pre-compiled regex at module level
-    - Fast early-exit checks before expensive operations
-    - Defers strip() until actually needed (avoids string allocation on fast path)
-    Args:
-        line: Log line to check (without rank prefix)
-    Returns:
-        True if line should be filtered out (dropped), False if it should be kept
-    """
-    # Fast path #1: Most log lines are much longer than device dumps
-    # Device dump lines are typically < 50 chars: "NNN device-name" or "Character devices:"
-    # Check original line length (no strip needed yet)
-    # ~99% of lines exit here in typical workloads
-    if len(line) > 65:  # Extra buffer for trailing newlines/spaces
-        return False
-    # Fast path #2: Empty lines - keep them (they're intentional formatting)
-    if not line:
-        return False
-    # Now we know it's a short line that's not empty - strip for pattern matching
-    # Only ~1% of lines reach this point in typical workloads
-    stripped = line.strip()
-    # Whitespace-only lines (e.g., "   \n", "\t\n") - keep them too
-    # These happen when workers output blank lines for readability
-    if not stripped:
-        return False
-    # Check for section headers (very fast frozenset lookup)
-    if stripped in _DEVICE_SECTION_HEADERS:
-        return True
-    # Check for device number entries: "NNN device-name"
-    # Pattern: 1-3 digits, space(s), device name
-    # Examples: "252 device-mapper", "1 mem", "195 nvidia"
-    # After stripping, device entries always start with a digit (fast pre-check before regex)
-    first_char = stripped[0]
-    if first_char.isdigit() and _DEVICE_ENTRY_PATTERN.match(stripped):
-def _patch_subprocess_handler_once():
-
-third_party/nvidia-resiliency-ext/src/nvidia_resiliency_ext/checkpointing/local/replication/utils.py
-def zip_strict(*args):
-
-third_party/nvidia-resiliency-ext/src/nvidia_resiliency_ext/checkpointing/local/basic_state_dict.py
+def inspect_types(x: Any, prefix: Tuple = (), indent: int = 4):
 def nested_values(x: Union[dict, list]):
-def dict_list_map_inplace(f, x):
+def nested_items_iter(x: Union[dict, list]):
+def dict_map(f: Callable, d: dict):
+def dict_map_with_key(f: Callable, d: dict):
+def dict_list_map_inplace(f: Callable, x: Union[dict, list]):
+def dict_list_map_outplace(f: Callable, x: Union[dict, list]):
+def merge(x1: dict, x2: dict, key: Tuple[str, ...] = ()):
+def map_reduce(
+    xs: Iterable,
+    key_fn: Callable = lambda x: x,
+    value_fn: Callable = lambda x: x,
+    reduce_fn: Callable = lambda x: x,
+) -> dict:
+    """Simple map-reduce implementation following `more_itertools.map_reduce` interface."""
+    res = defaultdict(list)
+    for x in xs:
+        res[key_fn(x)].append(value_fn(x))
+    for k in res:
+        res[k] = reduce_fn(res[k])
+    return dict(res)
+def merge_state_dicts_(current, incoming) -> None:
+    # Recursively add new keys to `current`
+    # Keys that already exists in the `current` will be overwritten
+    for key, value in incoming.items():
+def merge_namespaces_(ns1, ns2) -> None:
+    """Merge attributes of ns2 into ns1."""
+    for key, value in vars(ns2).items():
+def compare_namespaces(ns1, ns2):
+def merge_namespace_changes(original_ns, changes):
+def compare_state_dicts_and_get_new_values(curr_state, new_state):
 
 third_party/nvidia-resiliency-ext/src/nvidia_resiliency_ext/fault_tolerance/c10d_monkey_patch.py
 def _patched_create_tcp_store(params: "RendezvousParameters") -> "TCPStore":  # noqa: F821
@@ -534,6 +499,93 @@ def _patched_create_tcp_store(params: "RendezvousParameters") -> "TCPStore":  # 
     return store  # type: ignore[possibly-undefined]
 def apply_c10d_patch():
 
+third_party/nvidia-resiliency-ext/src/nvidia_resiliency_ext/shared_utils/grpc_log_server.py
+def serve(host: str, port: int, max_workers: int = 100, graceful_shutdown_timeout: float = 60.0):
+def main():
+
+third_party/nvidia-resiliency-ext/src/nvidia_resiliency_ext/fault_tolerance/per_cycle_logs.py
+def _should_filter_line(line: str) -> bool:
+    """
+    Filter out noisy lines that clutter logs but provide no useful information.
+    Currently filters:
+    - Nvidia driver /proc/devices dumps on process exit (Character/Block devices listings)
+    Optimized for minimal overhead:
+    - Pre-compiled regex at module level
+    - Fast early-exit checks before expensive operations
+    - Defers strip() until actually needed (avoids string allocation on fast path)
+    Args:
+        line: Log line to check (without rank prefix)
+    Returns:
+        True if line should be filtered out (dropped), False if it should be kept
+    """
+    # Fast path #1: Most log lines are much longer than device dumps
+    # Device dump lines are typically < 50 chars: "NNN device-name" or "Character devices:"
+    # Check original line length (no strip needed yet)
+    # ~99% of lines exit here in typical workloads
+    if len(line) > 65:  # Extra buffer for trailing newlines/spaces
+        return False
+    # Fast path #2: Empty lines - keep them (they're intentional formatting)
+    if not line:
+        return False
+    # Now we know it's a short line that's not empty - strip for pattern matching
+    # Only ~1% of lines reach this point in typical workloads
+    stripped = line.strip()
+    # Whitespace-only lines (e.g., "   \n", "\t\n") - keep them too
+    # These happen when workers output blank lines for readability
+    if not stripped:
+        return False
+    # Check for section headers (very fast frozenset lookup)
+    if stripped in _DEVICE_SECTION_HEADERS:
+        return True
+    # Check for device number entries: "NNN device-name"
+    # Pattern: 1-3 digits, space(s), device name
+    # Examples: "252 device-mapper", "1 mem", "195 nvidia"
+    # After stripping, device entries always start with a digit (fast pre-check before regex)
+    first_char = stripped[0]
+    if first_char.isdigit() and _DEVICE_ENTRY_PATTERN.match(stripped):
+def _patch_subprocess_handler_once():
+
+third_party/nvidia-resiliency-ext/src/nvidia_resiliency_ext/fault_tolerance/ft_rendezvous_barrier.py
+def _rdzv_signal_exception_handler(sig: int, frame: Optional[FrameType]) -> None:
+    del frame
+    raise SignalException(f"Received signal {sig} during rendezvous", signal.Signals(sig))
+def _install_rdzv_signal_handlers() -> Dict[signal.Signals, Any]:
+    prev_handlers: Dict[signal.Signals, Any] = {}
+    for sig_to_handle in (signal.SIGTERM, signal.SIGINT):
+def _restore_rdzv_signal_handlers(prev_handlers: Dict[signal.Signals, Any]) -> None:
+    for sig_to_handle, handler in prev_handlers.items():
+def get_method_name(depth=2):
+def _parse_domain_id_from_nvidia_smi() -> str:
+    """Parse domain ID from GPU using nvidia-smi to query ClusterUUID.
+    The ClusterUUID serves as the domain identifier.
+    All GPUs in the same NVLink domain share the same ClusterUUID.
+    Returns:
+        The ClusterUUID as the domain ID string.
+    Raises:
+        RuntimeError: If ClusterUUID cannot be retrieved.
+    Example:
+        >>> domain_id = _parse_domain_id_from_nvidia_smi()
+        >>> # domain_id is "abc9829a-d4c8-491c-8da5-ad28fb34876b"
+    """
+    import subprocess
+    try:
+        # Run nvidia-smi to query ClusterUUID
+        result = subprocess.run(
+            ['nvidia-smi', '-q'],
+            capture_output=True,
+            text=True,
+            timeout=10,
+            check=False,
+        )
+        if result.returncode != 0:
+            raise RuntimeError(
+                f"nvidia-smi command failed with return code {result.returncode}. "
+                f"stderr: {result.stderr}"
+            )
+        # Parse output to find ClusterUUID
+        cluster_uuid = None
+        for line in result.stdout.split('\n'):
+
 third_party/nvidia-resiliency-ext/src/nvidia_resiliency_ext/fault_tolerance/_ft_rendezvous.py
 def get_method_name(depth=2):
 def _is_final_workers_state(state: WorkerState) -> bool:
@@ -566,110 +618,58 @@ def _should_keep_alive(ctx: _RendezvousContext) -> bool:
 class _SetWorkersStateOp:
     def __init__(self, target_state: WorkerState):
 
-third_party/nvidia-resiliency-ext/src/nvidia_resiliency_ext/attribution/log_analyzer/nvrx_logsage.py
-def lines_after(lines, needle):
-def chunk_logs_strict(lines):
-def main():
-
-third_party/nvidia-resiliency-ext/src/nvidia_resiliency_ext/fault_tolerance/dict_utils.py
-def extract_matching_values(
-    x: Union[dict, list],
-    predicate: Callable[[Any], bool],
-    return_lists_as_dicts: bool = False,
-) -> Tuple[Union[dict, list], Union[dict, list]]:
-    """Return matching and nonmatching values. Keeps hierarchy.
-    Args:
-        x (Union[dict, list]) :
-def diff(x1: Any, x2: Any, prefix: Tuple = ()) -> Tuple[list, list, list]:
-    """Recursive diff of dicts.
-    Args:
-        x1 (object):
-def inspect_types(x: Any, prefix: Tuple = (), indent: int = 4):
-def nested_values(x: Union[dict, list]):
-def nested_items_iter(x: Union[dict, list]):
-def dict_map(f: Callable, d: dict):
-def dict_map_with_key(f: Callable, d: dict):
-def dict_list_map_inplace(f: Callable, x: Union[dict, list]):
-def dict_list_map_outplace(f: Callable, x: Union[dict, list]):
-def merge(x1: dict, x2: dict, key: Tuple[str, ...] = ()):
-def map_reduce(
-    xs: Iterable,
-    key_fn: Callable = lambda x: x,
-    value_fn: Callable = lambda x: x,
-    reduce_fn: Callable = lambda x: x,
-) -> dict:
-    """Simple map-reduce implementation following `more_itertools.map_reduce` interface."""
-    res = defaultdict(list)
-    for x in xs:
-        res[key_fn(x)].append(value_fn(x))
-    for k in res:
-        res[k] = reduce_fn(res[k])
-    return dict(res)
-def merge_state_dicts_(current, incoming) -> None:
-    # Recursively add new keys to `current`
-    # Keys that already exists in the `current` will be overwritten
-    for key, value in incoming.items():
-def merge_namespaces_(ns1, ns2) -> None:
-    """Merge attributes of ns2 into ns1."""
-    for key, value in vars(ns2).items():
-def compare_namespaces(ns1, ns2):
-def merge_namespace_changes(original_ns, changes):
-def compare_state_dicts_and_get_new_values(curr_state, new_state):
-
-third_party/nvidia-resiliency-ext/src/nvidia_resiliency_ext/checkpointing/local/replication/group_utils.py
-def batched(iterable, n):
-def parse_group_sequence(replication_jump, replication_factor, world_size):
-
-third_party/nvidia-resiliency-ext/src/nvidia_resiliency_ext/checkpointing/async_ckpt/state_dict_saver.py
-def _compare_dataclasses(obj1, obj2):
-def init_checkpoint_metadata_cache(cached_global_metadata: Metadata = None):
-def get_metadata_caching_status():
-def save_state_dict_async_plan(
-    state_dict: STATE_DICT_TYPE,
-    storage_writer: 'FileSystemWriterAsync',
-    process_group: Optional[dist.ProcessGroup] = None,
-    coordinator_rank: int = 0,
-    planner: Optional[Union[SavePlanner, DefaultSavePlanner]] = None,
-    enable_cache: bool = False,
-    metadata_cache: Optional[CheckpointMetadataCache] = None,
-) -> Tuple['FileSystemWriterAsync', Union[Metadata, None], _DistWrapper]:
+third_party/nvidia-resiliency-ext/src/nvidia_resiliency_ext/shared_utils/log_manager.py
+def setup_logger(
+    node_local_tmp_dir=None,
+    force_reset=False,
+    node_local_tmp_prefix: str = None,
+    log_file: Optional[str] = None,
+) -> logging.Logger:
     """
-    First stage of saving a state dict to storage.
-    This is an async adjustment of torch.distributed.checkpoint.state_dict_saver.
-    In order to support async save, saving should be split into three parts:
-    1. Planning
-    2. Actual saving
-    3. Finalization
-    Out of these, step (2) *must* happen asynchronously.
-    The first step is realized with this function.
-    The planning part consists of several steps, described here:
-    https://pytorch.org/docs/stable/distributed.checkpoint.html#torch.distributed.checkpoint.SavePlanner
+    Setup the distributed logger.
+    This function configures the standard Python logger "nvrx" with appropriate
+    handlers for distributed logging. It's safe to call multiple times - if the
+    logger is already configured, it won't be reconfigured unless force_reset=True.
+    The expectation is that this function is called once at the start of the program,
+    and then the logger is used throughout the program i.e. its a singleton.
+    The logger automatically adapts to distributed or regular mode based on
+    whether NVRX_NODE_LOCAL_TMPDIR is set. If set, enables distributed logging
+    with aggregation. If not set, logs go directly to stderr/stdout.
+    The logger is fork-safe: all ranks use file-based message passing to ensure
+    child processes can log even when they don't inherit the aggregator thread.
     Args:
-        state_dict (STATE_DICT_TYPE):
-def verify_global_md_reuse(
-    loaded_all_plans: List[SavePlan], local_plan: SavePlan, rank: int, dist_wrapper: _DistWrapper
-) -> bool:
+        node_local_tmp_dir: Optional directory path for temporary files. If None, uses NVRX_NODE_LOCAL_TMPDIR env var.
+        force_reset: If True, force reconfiguration even if logger is already configured.
+                    Useful for subprocesses that need fresh logger setup.
+        node_local_tmp_prefix: Optional prefix for log files (e.g. "ftlauncher").
+        log_file: Optional path to log file. When specified, logs are written to this file
+                 with rank prefixes (like srun -l) instead of console. All processes write
+                 to the same file using append mode for safe concurrent writes.
+    Returns:
+        logging.Logger: Configured logger instance
+    Example:
+        # In main script (launcher.py) or training subprocess
+        from nvidia_resiliency_ext.shared_utils.log_manager import setup_logger
+        logger = setup_logger()
+        # With log file for consolidated logging across all ranks/nodes
+        logger = setup_logger(log_file="/path/to/base.log")
+        # In subprocesses that need fresh logger setup
+        logger = setup_logger(force_reset=True)
+        # In other modules
+        import logging
+        logger = logging.getLogger(LogConfig.name)
+        logger.info("Some message")
     """
-    Verifies that global metadata reuse is possible by checking the loaded plans from the
-     checkpoint are consistent, which means we have the same settings when resuming training.
-    Args:
-        loaded_all_plans: List[SavePlan], The loaded plans from the checkpoint
-         (stored in checkpoint metadata).
-        local_plan: SavePlan, The local save plan.
-        rank: Current process rank.
-        dist_wrapper (_DistWrapper):
-def save_state_dict_async_finalize(
-    storage_writer: 'FileSystemWriterAsync', global_metadata: Metadata, dist_wrapper: _DistWrapper
-) -> None:
-    """
-    Finalization of save_state_dict_async_plan.
-    The input arguments are the same as the save_state_dict_async_plan output,
-    the `write_results` are retrieved from the storage_writer.
-    Args:
-        storage_writer (FileSystemWriterAsync):
-
-third_party/nvidia-resiliency-ext/src/nvidia_resiliency_ext/checkpointing/async_ckpt/core.py
-def abort_nvrx_checkpoint():
+    # Check if the nvrx logger is already configured
+    logger = logging.getLogger(LogConfig.name)
+    # If force_reset is True or the logger has no handlers, configure it
+    if force_reset or not logger.handlers:
+        # Clear existing handlers if force_reset is True
+        if force_reset:
+            for handler in logger.handlers[:]:
+                logger.removeHandler(handler)
+            # Clear any stored log manager to force fresh creation
+            if hasattr(setup_logger, '_log_manager'):
 
 third_party/nvidia-resiliency-ext/src/nvidia_resiliency_ext/fault_tolerance/utils.py
 def get_infrastructure_rank(skip_nodename_logic: bool = False) -> int:
