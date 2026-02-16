@@ -11,3 +11,4 @@ sync = { cmd = "bash scripts/refresh_list.sh" }
 [dependencies]
 parallel = ">=20260122,<20260123"
 ripgrep = ">=15.1.0,<16"
+yq = ">=3.4.3,<4"

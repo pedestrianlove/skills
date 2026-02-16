@@ -1,10 +1,7 @@
-third_party/nvidia-resiliency-ext/nvrx_build.py
-def find_file_in_dir(cuda_path, sfile):
-def _skip_ext_build():
-def get_cuda_path():
-def _compile_protos(proto_dir, proto_filenames):
-def build(setup_kwargs):
-
+---
+name: nvidia-resiliency-ext
+description: Skills for agents to consume for nvidia-resiliency-ext
+---
 third_party/nvidia-resiliency-ext/examples/inprocess/advanced_example.py
 def parse_args():
 def train(
@@ -19,35 +16,12 @@ def train(
 ):
 def main():
 
+third_party/nvidia-resiliency-ext/examples/fault_tolerance/log_utils.py
+def setup_logging(log_all_ranks=True, filename=os.devnull, filemode='w'):
+
 third_party/nvidia-resiliency-ext/examples/inprocess/basic_example.py
 def parse_args():
 def main(call_wrapper: Optional[inprocess.CallWrapper] = None):
-
-third_party/nvidia-resiliency-ext/examples/checkpointing/async_writer.py
-def print_on_rank0(msg):
-def parse_args():
-def init_distributed_backend(backend="nccl"):
-def get_save_and_finalize_callbacks(writer, save_state_dict_ret) -> AsyncRequest:
-    """Creates an async save request with a finalize function."""
-    save_fn, preload_fn, save_args = writer.get_save_function_and_args()
-    def finalize_fn():
-def save_checkpoint(checkpoint_dir, async_queue, model, thread_count, enable_msc):
-def load_checkpoint(checkpoint_dir, model, thread_count, enable_msc):
-def main():
-
-third_party/nvidia-resiliency-ext/examples/checkpointing/async_ckpt.py
-def parse_args():
-def init_distributed_backend(backend="nccl"):
-def cleanup(ckpt_dir):
-def main():
-
-third_party/nvidia-resiliency-ext/examples/checkpointing/local_ckpt.py
-def parse_args():
-def init_distributed_backend(backend="nccl"):
-def create_checkpoint_manager(args):
-def save(args, ckpt_manager, async_queue, model, iteration):
-def load(args, ckpt_manager):
-def main():
 
 third_party/nvidia-resiliency-ext/examples/straggler/example.py
 def train(args) -> None:
@@ -80,6 +54,135 @@ def train(args) -> None:
     training_start_time = time.monotonic()
     while epoch_num < args.num_epochs:
         for batch_idx, (data, target) in enumerate(loader):
+
+third_party/nvidia-resiliency-ext/examples/fault_tolerance/train_ddp_sections_api.py
+def parse_args():
+def load_checkpoint(path):
+def save_checkpoint(
+    progress,
+    model,
+    optimizer,
+    ft_client,
+    output_dir,
+    checkpoint_fname,
+):
+def maybe_load_ft_state(path):
+def save_ft_state(ft_client, path):
+def update_ft_section_timeouts(ft_client, selected_sections, calc_out_of_section, ft_state_path):
+def training_loop(
+    ft_client,
+    para_model,
+    model,
+    optimizer,
+    device,
+    dataloader,
+    progress,
+    args,
+):
+def validation_loop(ft_client, model, val_dataloader, epoch_idx, device):
+def _cancel_simulated_fault():
+def _setup_simulated_fault(fault_desc, device):
+def _sig_handler(*args, **kwargs):
+def main():
+
+third_party/nvidia-resiliency-ext/examples/utils/node_health_check_example.py
+def main():
+
+third_party/nvidia-resiliency-ext/examples/fault_tolerance/dist_utils.py
+def broadcast(tensor, src, group=torch.distributed.group.WORLD, async_op=False):
+def all_gather(tensor_list, tensor, group=torch.distributed.group.WORLD, async_op=False):
+def sync_workers():
+def barrier():
+def get_rank():
+def all_reduce_item(value, op='sum'):
+def get_world_size(group=None):
+def init_distributed_with_tcp_store(device):
+def init_distributed_with_file_store(device, store_file_dir="/tmp"):
+def gather_tensors(tensor, device):
+def gather_objects(obj, device):
+def get_device_for_backend(group):
+def is_true_on_any_rank(flag: bool, group=None) -> bool:
+    """Check if a boolean flag is true in any processes in the group."""
+    ret = flag
+    if get_world_size(group) > 1:
+        device = get_device_for_backend(group)
+        flag_tensor = torch.tensor([1.0 if flag else 0], dtype=torch.float32, device=device)
+        torch.distributed.all_reduce(flag_tensor, op=torch.distributed.ReduceOp.MAX, group=group)
+        ret = bool(flag_tensor.item() > 0)
+    return ret
+class ResumableDistributedSampler(torch.utils.data.DistributedSampler):
+
+third_party/nvidia-resiliency-ext/src/nvidia_resiliency_ext/inprocess/attribution.py
+def format_interruption_records(records):
+
+third_party/nvidia-resiliency-ext/examples/fault_tolerance/train_ddp_heartbeats_api.py
+def parse_args():
+def load_checkpoint(path):
+def save_checkpoint(
+    progress,
+    model,
+    optimizer,
+    ft_client,
+    output_dir,
+    checkpoint_fname,
+):
+def training_loop(
+    ft_client,
+    para_model,
+    model,
+    optimizer,
+    device,
+    dataloader,
+    sampler,
+    progress,
+    args,
+):
+def validation_loop(ft_client, model, val_dataloader, epoch_idx, device):
+def _cancel_simulated_fault():
+def _setup_simulated_fault(ft_client, fault_desc, device):
+def _sig_handler(*args, **kwargs):
+def main():
+
+third_party/nvidia-resiliency-ext/examples/fault_tolerance/basic_ft_example.py
+def print_on_rank0(msg):
+def main(rank, world_size):
+
+third_party/nvidia-resiliency-ext/examples/checkpointing/async_writer.py
+def print_on_rank0(msg):
+def parse_args():
+def init_distributed_backend(backend="nccl"):
+def get_save_and_finalize_callbacks(writer, save_state_dict_ret) -> AsyncRequest:
+    """Creates an async save request with a finalize function."""
+    save_fn, preload_fn, save_args = writer.get_save_function_and_args()
+    def finalize_fn():
+def save_checkpoint(checkpoint_dir, async_queue, model, thread_count, enable_msc):
+def load_checkpoint(checkpoint_dir, model, thread_count, enable_msc):
+def main():
+
+third_party/nvidia-resiliency-ext/src/nvidia_resiliency_ext/inprocess/state.py
+def freeze_dataclass(cls):
+
+third_party/nvidia-resiliency-ext/examples/checkpointing/async_ckpt.py
+def parse_args():
+def init_distributed_backend(backend="nccl"):
+def cleanup(ckpt_dir):
+def main():
+
+third_party/nvidia-resiliency-ext/examples/checkpointing/local_ckpt.py
+def parse_args():
+def init_distributed_backend(backend="nccl"):
+def create_checkpoint_manager(args):
+def save(args, ckpt_manager, async_queue, model, iteration):
+def load(args, ckpt_manager):
+def main():
+
+third_party/nvidia-resiliency-ext/src/nvidia_resiliency_ext/inprocess/param_utils.py
+def check_type(annotation, cls):
+def count_type_in_params(fn, cls):
+def substitute_param_value(fn, args, kwargs, subs):
+def enforce_subclass(argument, class_or_tuple):
+def enforce_type(argument, class_or_tuple):
+def enforce_value(condition):
 
 third_party/nvidia-resiliency-ext/examples/attribution/nvrx_attrsvc.py
 def get_slack_user_email(userID: str, token: str) -> str | None:
@@ -155,104 +258,6 @@ def _normalize_and_validate_path(
     if not os.path.isabs(user_path):
 def main():
 
-third_party/nvidia-resiliency-ext/examples/fault_tolerance/log_utils.py
-def setup_logging(log_all_ranks=True, filename=os.devnull, filemode='w'):
-
-third_party/nvidia-resiliency-ext/examples/utils/node_health_check_example.py
-def main():
-
-third_party/nvidia-resiliency-ext/examples/fault_tolerance/dist_utils.py
-def broadcast(tensor, src, group=torch.distributed.group.WORLD, async_op=False):
-def all_gather(tensor_list, tensor, group=torch.distributed.group.WORLD, async_op=False):
-def sync_workers():
-def barrier():
-def get_rank():
-def all_reduce_item(value, op='sum'):
-def get_world_size(group=None):
-def init_distributed_with_tcp_store(device):
-def init_distributed_with_file_store(device, store_file_dir="/tmp"):
-def gather_tensors(tensor, device):
-def gather_objects(obj, device):
-def get_device_for_backend(group):
-def is_true_on_any_rank(flag: bool, group=None) -> bool:
-    """Check if a boolean flag is true in any processes in the group."""
-    ret = flag
-    if get_world_size(group) > 1:
-        device = get_device_for_backend(group)
-        flag_tensor = torch.tensor([1.0 if flag else 0], dtype=torch.float32, device=device)
-        torch.distributed.all_reduce(flag_tensor, op=torch.distributed.ReduceOp.MAX, group=group)
-        ret = bool(flag_tensor.item() > 0)
-    return ret
-class ResumableDistributedSampler(torch.utils.data.DistributedSampler):
-
-third_party/nvidia-resiliency-ext/examples/fault_tolerance/train_ddp_heartbeats_api.py
-def parse_args():
-def load_checkpoint(path):
-def save_checkpoint(
-    progress,
-    model,
-    optimizer,
-    ft_client,
-    output_dir,
-    checkpoint_fname,
-):
-def training_loop(
-    ft_client,
-    para_model,
-    model,
-    optimizer,
-    device,
-    dataloader,
-    sampler,
-    progress,
-    args,
-):
-def validation_loop(ft_client, model, val_dataloader, epoch_idx, device):
-def _cancel_simulated_fault():
-def _setup_simulated_fault(ft_client, fault_desc, device):
-def _sig_handler(*args, **kwargs):
-def main():
-
-third_party/nvidia-resiliency-ext/examples/fault_tolerance/basic_ft_example.py
-def print_on_rank0(msg):
-def main(rank, world_size):
-
-third_party/nvidia-resiliency-ext/examples/fault_tolerance/train_ddp_sections_api.py
-def parse_args():
-def load_checkpoint(path):
-def save_checkpoint(
-    progress,
-    model,
-    optimizer,
-    ft_client,
-    output_dir,
-    checkpoint_fname,
-):
-def maybe_load_ft_state(path):
-def save_ft_state(ft_client, path):
-def update_ft_section_timeouts(ft_client, selected_sections, calc_out_of_section, ft_state_path):
-def training_loop(
-    ft_client,
-    para_model,
-    model,
-    optimizer,
-    device,
-    dataloader,
-    progress,
-    args,
-):
-def validation_loop(ft_client, model, val_dataloader, epoch_idx, device):
-def _cancel_simulated_fault():
-def _setup_simulated_fault(fault_desc, device):
-def _sig_handler(*args, **kwargs):
-def main():
-
-third_party/nvidia-resiliency-ext/src/nvidia_resiliency_ext/inprocess/attribution.py
-def format_interruption_records(records):
-
-third_party/nvidia-resiliency-ext/src/nvidia_resiliency_ext/inprocess/compose.py
-def find_common_ancestor(*instances):
-
 third_party/nvidia-resiliency-ext/examples/fault_tolerance/in_job_and_in_process_example.py
 def _get_last_sim_fault_iter_path(rank, target_dir="/tmp/") -> str:
     # Returns the path of the file that stores the last simulated fault iteration for this rank
@@ -281,6 +286,32 @@ def train(
 ):
 def main():
 
+third_party/nvidia-resiliency-ext/src/nvidia_resiliency_ext/testing_utils/health_check_injector.py
+def set_current_cycle(cycle: int) -> None:
+    """
+    Set the current rendezvous cycle for injection checking.
+    This should be called by the rendezvous handler before health checks.
+    Args:
+        cycle: The current rendezvous round/cycle number.
+    """
+    global _current_cycle
+    _current_cycle = cycle
+class HealthCheckInjector:
+    """Manages GPU health check failure injection for testing purposes."""
+    def __init__(self):
+def _get_injector() -> Optional[HealthCheckInjector]:
+    """Get the global health check injector instance, or None if not enabled."""
+    global _injector
+    if _injector is None and os.environ.get("NVRX_INJECT_GPU_FAILURE"):
+def _monkey_patch_gpu_health_check():
+
+third_party/nvidia-resiliency-ext/src/nvidia_resiliency_ext/inprocess/rank_assignment.py
+def bounded_activate(node, counter, path=None, current_state=None):
+def propagate_terminations(node, terminated_ranks):
+
+third_party/nvidia-resiliency-ext/tests/inprocess/test_app.py
+def launch(fn, **kwargs):
+
 third_party/nvidia-resiliency-ext/src/nvidia_resiliency_ext/checkpointing/utils.py
 def logger_stack(name: Optional[str] = None, current_logger: Optional[logging.Logger] = None):
 def debug_time(
@@ -298,12 +329,72 @@ def dict_list_map_outplace(f: Callable[[U], V], x: Union[Dict, List, U]) -> Unio
     """Maps dicts and lists *out-of-place* with a given function."""
     if isinstance(x, dict):
 
-third_party/nvidia-resiliency-ext/src/nvidia_resiliency_ext/checkpointing/local/replication/group_utils.py
-def batched(iterable, n):
-def parse_group_sequence(replication_jump, replication_factor, world_size):
+third_party/nvidia-resiliency-ext/src/nvidia_resiliency_ext/attribution/straggler/dist_utils.py
+def all_gather_object(obj, group):
+def get_world_size(group):
+def get_rank(group):
+def get_device_for_backend(group):
+def all_reduce(tensor, op=torch.distributed.ReduceOp.SUM, group=None, async_op=False):
+def gather_on_rank0(tensor, group=None):
 
-third_party/nvidia-resiliency-ext/src/nvidia_resiliency_ext/inprocess/state.py
-def freeze_dataclass(cls):
+third_party/nvidia-resiliency-ext/tests/checkpointing/unit/__init__.py
+def empty_dir(path: Path):
+
+third_party/nvidia-resiliency-ext/src/nvidia_resiliency_ext/inprocess/wrap.py
+def reserve_fn(state, store, progress_watchdog, progress_watchdog_interval):
+
+third_party/nvidia-resiliency-ext/tests/inprocess/test_torch.py
+def abort_process_group():
+
+third_party/nvidia-resiliency-ext/src/nvidia_resiliency_ext/inprocess/utils.py
+def torch_older_than(version):
+def format_exc(exc: BaseException):
+def format_rank_set_verbose(ranks):
+def format_rank_set_brief(ranks, max_show=8):
+def format_rank_set(ranks):
+def log_exc(rank_or_state, exc, name):
+def _log_exec(target, offset=3):
+def log_exec(target):
+def find_nearest_handler(logger, handler_cls):
+
+third_party/nvidia-resiliency-ext/tests/checkpointing/unit/conftest.py
+def tmp_path_dist_ckpt(tmp_path_factory) -> Path:
+    """Common directory for saving the checkpoint.
+    Can't use pytest `tmp_path_factory` directly because directory must be shared between processes.
+    """
+    tmp_dir = tmp_path_factory.mktemp('ignored', numbered=False)
+    tmp_dir = tmp_dir.parent.parent / 'tmp_dist_ckpt'
+    if Utils.rank == 0:
+        with TempNamedDir(tmp_dir, sync=False):
+def async_queue():
+
+third_party/nvidia-resiliency-ext/src/nvidia_resiliency_ext/ptl_resiliency/_utils.py
+def is_module_available(module: str) -> bool:
+    import importlib
+    return importlib.util.find_spec(module) is not None
+@dataclass
+class SimulatedFaultParams:
+    """
+    Description of a simulated rank fault, used for FT testing and debugging.
+    Simulated fault types are:
+    - 'rank_killed' a rank is killed with SIGKILL
+    - 'rank_hung' a rank is stopped with SIGSTOP
+    - 'random' randomly selects one of the above faults.
+    Fault delay is computed as:
+    - `base_delay` + RAND_FLOAT_FROM_0.0_to_1.0 * `rand_delay`
+    Attributes:
+        fault_type (str):
+def parse_simulated_fault_params(simulated_fault_params) -> Optional[SimulatedFaultParams]:
+    if simulated_fault_params is None:
+        return None
+    if isinstance(simulated_fault_params, SimulatedFaultParams):
+def setup_simulated_fault(fault_desc: SimulatedFaultParams):
+
+third_party/nvidia-resiliency-ext/src/nvidia_resiliency_ext/inprocess/monitor_thread.py
+def async_raise(tid, exc_type, event=None):
+def delayed_async_raise(tid, exc_type):
+def reraise_if_unraisable(exc_type):
+def async_abort_main_thread(msg=None):
 
 third_party/nvidia-resiliency-ext/src/nvidia_resiliency_ext/checkpointing/local/replication/_torch_future.py
 def call_with_only_valid_kwargs(fn, **kwargs):
@@ -311,6 +402,13 @@ def object_to_tensor(obj, current_device=None, group=None):
 def tensor_to_object(tensor, tensor_size, group=None):
 def send_object_list(object_list, dst, group=None, device=None):
 def recv_object_list(object_list, src=None, group=None, device=None):
+
+third_party/nvidia-resiliency-ext/src/nvidia_resiliency_ext/inprocess/compose.py
+def find_common_ancestor(*instances):
+
+third_party/nvidia-resiliency-ext/src/nvidia_resiliency_ext/attribution/trace_analyzer/fr_attribution.py
+def eprint(*args, **kwargs):
+def main():
 
 third_party/nvidia-resiliency-ext/src/nvidia_resiliency_ext/checkpointing/local/replication/torch_device_utils.py
 def get_default_device_from_type(device_type: str) -> torch.device:
@@ -320,15 +418,75 @@ def get_default_device_from_type(device_type: str) -> torch.device:
     Args:
         device_type (str):
 
+third_party/nvidia-resiliency-ext/tests/checkpointing/unit/test_async_writer.py
+def mock_open(
+    self,
+    path: str,
+    mode: str = "rb",
+) -> IO[Any]:
+    """Function matching the system open() signature that always raises an error."""
+    raise OSError('worker critical failure during open()')
+class TestAsyncSave:
+    def get_async_save_request(self, writer, save_state_dict_ret) -> AsyncRequest:
+        """Creates an async save request with a finalization step."""
+        save_fn, preload_fn, save_args = writer.get_save_function_and_args()
+        def finalize_fn():
+
 third_party/nvidia-resiliency-ext/src/nvidia_resiliency_ext/checkpointing/local/replication/utils.py
 def zip_strict(*args):
+
+third_party/nvidia-resiliency-ext/src/nvidia_resiliency_ext/attribution/mcp_integration/module_definitions.py
+def register_all_modules():
+def create_args_from_dict(module_name: str, config: dict) -> argparse.Namespace:
+    """
+    Create an argparse.Namespace from a configuration dictionary.
+    Args:
+        module_name: Name of the module
+        config: Configuration dictionary
+    Returns:
+        argparse.Namespace with module configuration
+    """
+    metadata = global_registry.get_module_metadata(module_name)
+    if not metadata:
+        raise ValueError(f"Module '{module_name}' not found in registry")
+    # Get schema defaults
+    schema = metadata.input_schema
+    properties = schema.get("properties", {})
+    # Build args with defaults
+    args_dict = {}
+    for prop_name, prop_schema in properties.items():
+
+third_party/nvidia-resiliency-ext/tests/inprocess/common.py
+def silence_deprecation_warnings():
+def torch_older_than(version):
+def find_free_port():
+def apply_all_tests(decorator):
+def retry(max_attempts=5, delay=1):
+def is_port_available(port, host='localhost'):
+def wait_for_port(port, host='localhost', timeout=5, check_interval=0.1):
+def wrap_store(store, *args):
+def unroll_generators(params):
+def subtests(params):
+def instantiate_parametrized_tests(generic_cls):
+def compose_parametrize_fns(old_parametrize_fn, new_parametrize_fn):
+def dtype_name(dtype):
 
 third_party/nvidia-resiliency-ext/src/nvidia_resiliency_ext/checkpointing/local/basic_state_dict.py
 def nested_values(x: Union[dict, list]):
 def dict_list_map_inplace(f, x):
 
-third_party/nvidia-resiliency-ext/src/nvidia_resiliency_ext/inprocess/wrap.py
-def reserve_fn(state, store, progress_watchdog, progress_watchdog_interval):
+third_party/nvidia-resiliency-ext/src/nvidia_resiliency_ext/attribution/mcp_integration/server_launcher.py
+def main():
+
+third_party/nvidia-resiliency-ext/src/nvidia_resiliency_ext/attribution/combined_log_fr/combined_log_fr.py
+def main():
+
+third_party/nvidia-resiliency-ext/src/nvidia_resiliency_ext/attribution/mcp_integration/registry.py
+def serialize_result(result: Any) -> str:
+    """Serialize attribution result to JSON string."""
+    if result is None:
+        return json.dumps(None)
+    if is_dataclass(result):
 
 third_party/nvidia-resiliency-ext/src/nvidia_resiliency_ext/checkpointing/async_ckpt/filesystem_async.py
 def _get_write_results_queue():
@@ -358,6 +516,17 @@ def _process_memory() -> int:
     Get memory used by current process.
     Returns (int):
 
+third_party/nvidia-resiliency-ext/src/nvidia_resiliency_ext/attribution/utils.py
+def capture_logs(logger_name=None):
+def capture_stdout(logger_name=None):
+
+third_party/nvidia-resiliency-ext/tests/inprocess/test_timeout.py
+def kwargs():
+
+third_party/nvidia-resiliency-ext/src/nvidia_resiliency_ext/checkpointing/local/replication/group_utils.py
+def batched(iterable, n):
+def parse_group_sequence(replication_jump, replication_factor, world_size):
+
 third_party/nvidia-resiliency-ext/src/nvidia_resiliency_ext/inprocess/tools/inject_fault.py
 def register_fault(fault_name_or_enum: Union[str, Fault], handler: Callable):
 def dispatch_fault_injection(fault, delay, callback):
@@ -382,26 +551,6 @@ def inject_fault(
     callback: Optional[Callable[[], Any]] = None,
 ):
 
-third_party/nvidia-resiliency-ext/src/nvidia_resiliency_ext/inprocess/utils.py
-def torch_older_than(version):
-def format_exc(exc: BaseException):
-def format_rank_set_verbose(ranks):
-def format_rank_set_brief(ranks, max_show=8):
-def format_rank_set(ranks):
-def log_exc(rank_or_state, exc, name):
-def _log_exec(target, offset=3):
-def log_exec(target):
-def find_nearest_handler(logger, handler_cls):
-
-third_party/nvidia-resiliency-ext/src/nvidia_resiliency_ext/inprocess/rank_assignment.py
-def bounded_activate(node, counter, path=None, current_state=None):
-def propagate_terminations(node, terminated_ranks):
-
-third_party/nvidia-resiliency-ext/src/nvidia_resiliency_ext/attribution/log_analyzer/nvrx_logsage.py
-def lines_after(lines, needle):
-def chunk_logs_strict(lines):
-def main():
-
 third_party/nvidia-resiliency-ext/src/nvidia_resiliency_ext/inprocess/monitor_process.py
 def is_process_active(process):
 def terminate_process(
@@ -409,15 +558,175 @@ def terminate_process(
 ):
 def daemonize_fn(fn, fn_args=(), fn_kwargs=None):
 
-third_party/nvidia-resiliency-ext/src/nvidia_resiliency_ext/inprocess/monitor_thread.py
-def async_raise(tid, exc_type, event=None):
-def delayed_async_raise(tid, exc_type):
-def reraise_if_unraisable(exc_type):
-def async_abort_main_thread(msg=None):
+third_party/nvidia-resiliency-ext/src/nvidia_resiliency_ext/attribution/log_analyzer/nvrx_logsage.py
+def lines_after(lines, needle):
+def chunk_logs_strict(lines):
+def main():
 
-third_party/nvidia-resiliency-ext/src/nvidia_resiliency_ext/attribution/utils.py
-def capture_logs(logger_name=None):
-def capture_stdout(logger_name=None):
+third_party/nvidia-resiliency-ext/tests/ptl_resiliency/unit/test_local_ckpt_callback.py
+def _run_trainining(
+    max_steps=100_000,
+    max_epochs=3,
+    max_time=None,
+    val_check_interval=None,
+    custom_callbacks=None,
+    custom_checkpoint_io_fn=None,
+):
+def inspect_checkpoints(dirpath, expected_paths: Iterable[str] = None, verbose: bool = True):
+def test_local_ckpt_callback_called_every_n_train_steps(tmp_path):
+def test_local_ckpt_callback_called_every_time_interval(tmp_path):
+def test_local_ckpt_restoration(tmp_path, caplog):
+
+third_party/nvidia-resiliency-ext/src/nvidia_resiliency_ext/shared_utils/log_aggregator.py
+def main():
+
+third_party/nvidia-resiliency-ext/nvrx_build.py
+def find_file_in_dir(cuda_path, sfile):
+def _skip_ext_build():
+def get_cuda_path():
+def _compile_protos(proto_dir, proto_filenames):
+def build(setup_kwargs):
+
+third_party/nvidia-resiliency-ext/tests/ptl_resiliency/unit/test_straggler_det_callback.py
+def tmp_path():
+def _create_test_logger(logger_name, log_file_path):
+def test_prints_perf_scores_when_fitting(tmp_path):
+def test_logs_perf_scores_when_fitting(tmp_path):
+
+third_party/nvidia-resiliency-ext/src/nvidia_resiliency_ext/shared_utils/storage_probe.py
+def _storage_path_probe(paths: Optional[list[str]] = None) -> dict:
+    """
+    Probe a list of paths and return a dict with keys: invalid, missing, unreadable.
+    This function is invoked inside a short-lived subprocess to avoid hangs on
+    remote filesystems access.
+    """
+    invalid: list[str] = []
+    missing: list[str] = []
+    unreadable: list[str] = []
+    if not paths:
+        logger.debug("storage probe invoked with no paths; treating as success")
+        return {"invalid": invalid, "missing": missing, "unreadable": unreadable}
+    for p in paths:
+        # Skip None and empty strings
+        if not p:
+            continue
+        # Ensure p is a string (defensive check)
+        if not isinstance(p, str):
+
+third_party/nvidia-resiliency-ext/tests/ptl_resiliency/func/nemo20/test_local_ckpt_llama3.py
+def get_trainer(args, callbacks, async_save=True):
+def print_rank0(msg):
+def get_parser():
+def main():
+
+third_party/nvidia-resiliency-ext/tests/ptl_resiliency/func/nemo20/ft_test_llama3.py
+def get_ft_callback(args):
+def get_trainer(args, callbacks):
+def print_rank0(msg):
+def get_parser():
+def main():
+
+third_party/nvidia-resiliency-ext/src/nvidia_resiliency_ext/fault_tolerance/ft_rendezvous_barrier.py
+def _rdzv_signal_exception_handler(sig: int, frame: Optional[FrameType]) -> None:
+    del frame
+    raise SignalException(f"Received signal {sig} during rendezvous", signal.Signals(sig))
+def _install_rdzv_signal_handlers() -> Dict[signal.Signals, Any]:
+    prev_handlers: Dict[signal.Signals, Any] = {}
+    for sig_to_handle in (signal.SIGTERM, signal.SIGINT):
+def _restore_rdzv_signal_handlers(prev_handlers: Dict[signal.Signals, Any]) -> None:
+    for sig_to_handle, handler in prev_handlers.items():
+def get_method_name(depth=2):
+def _parse_domain_id_from_nvidia_smi() -> str:
+    """Parse domain ID from GPU using nvidia-smi to query ClusterUUID.
+    The ClusterUUID serves as the domain identifier.
+    All GPUs in the same NVLink domain share the same ClusterUUID.
+    Returns:
+        The ClusterUUID as the domain ID string.
+    Raises:
+        RuntimeError: If ClusterUUID cannot be retrieved.
+    Example:
+        >>> domain_id = _parse_domain_id_from_nvidia_smi()
+        >>> # domain_id is "abc9829a-d4c8-491c-8da5-ad28fb34876b"
+    """
+    import subprocess
+    try:
+        # Run nvidia-smi to query ClusterUUID
+        result = subprocess.run(
+            ['nvidia-smi', '-q'],
+            capture_output=True,
+            text=True,
+            timeout=10,
+            check=False,
+        )
+        if result.returncode != 0:
+            raise RuntimeError(
+                f"nvidia-smi command failed with return code {result.returncode}. "
+                f"stderr: {result.stderr}"
+            )
+        # Parse output to find ClusterUUID
+        cluster_uuid = None
+        for line in result.stdout.split('\n'):
+
+third_party/nvidia-resiliency-ext/src/nvidia_resiliency_ext/shared_utils/os_utils.py
+def validate_directory(dir_path: str) -> None:
+    """
+    Validate that a directory is safe for file operations.
+    This function performs comprehensive security checks to ensure the directory
+    is safe from symlink attacks and has appropriate permissions.
+    Args:
+        dir_path: Path to the directory to validate
+    Raises:
+        OSError: If the directory is unsafe or inaccessible
+    """
+    if not os.path.exists(dir_path):
+def validate_filepath(file_path: str) -> None:
+    """
+    Validate that a file path is safe for file operations.
+    This function checks that the file (if it exists) is not a symlink and is a regular file.
+    Args:
+        file_path: Path to the file to validate
+    Raises:
+        OSError: If the file is unsafe or inaccessible
+    """
+    if os.path.exists(file_path):
+
+third_party/nvidia-resiliency-ext/tests/inprocess/app.py
+def unixTimestamp():
+def parse_args(namespace=None, allow_extras=True):
+def maybe_trigger_fault(rank, world_size, args):
+def training_main():
+def train(
+    base_store: torch.distributed.TCPStore = None,
+    call_wrapper: inprocess.CallWrapper = None,
+    namespace: Optional[argparse.Namespace] = None,
+):
+def main():
+
+third_party/nvidia-resiliency-ext/src/nvidia_resiliency_ext/shared_utils/health_check.py
+def _run_shell(cmd: str, timeout: int = 55) -> tuple[int, str, str]:
+    try:
+        proc = subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=timeout)
+        return proc.returncode, proc.stdout or "", proc.stderr or ""
+    except subprocess.TimeoutExpired as e:
+        return -9, e.stdout or "", e.stderr or "timeout"
+    except Exception as e:
+        return -1, "", str(e)
+# Adds basic thread safety, allowing to run health checks from multiple threads.
+# This is needed for rendezvous unit tests. NOTE: It will work as long as each
+# function/method that uses NVML performs NVML initialization and shutdown.
+# Please follow this pattern when adding new code.
+_nvml_lock = threading.RLock()
+def with_pynvml_lock(func):
+
+third_party/nvidia-resiliency-ext/tests/ptl_resiliency/func/nemo20/check_straggler_log.py
+def cmd_check_status(log_file_lines, args):
+def cmd_num_reports(log_file_lines, args):
+def _check_gpu_stragglers(log_file_lines, pattern, expected_stragglers):
+def cmd_relative_gpu_stragglers(log_file_lines, args):
+def cmd_individual_gpu_stragglers(log_file_lines, args):
+def cmd_check_terminating(log_file_lines, args):
+def read_log_file(log_file):
+def main():
 
 third_party/nvidia-resiliency-ext/src/nvidia_resiliency_ext/checkpointing/async_ckpt/state_dict_saver.py
 def _compare_dataclasses(obj1, obj2):
@@ -467,187 +776,186 @@ def save_state_dict_async_finalize(
     Args:
         storage_writer (FileSystemWriterAsync):
 
-third_party/nvidia-resiliency-ext/src/nvidia_resiliency_ext/inprocess/param_utils.py
-def check_type(annotation, cls):
-def count_type_in_params(fn, cls):
-def substitute_param_value(fn, args, kwargs, subs):
-def enforce_subclass(argument, class_or_tuple):
-def enforce_type(argument, class_or_tuple):
-def enforce_value(condition):
+third_party/nvidia-resiliency-ext/tests/ptl_resiliency/unit/test_ft_callback_hb.py
+def tmp_path():
+def _get_ft_test_config():
+def run_rank_monitors():
+def _create_test_logger(logger_name, log_file_path):
+def _run_trainining(
+    tmp_path,
+    max_steps=100_000,
+    max_epochs=4,
+    max_time=None,
+    val_check_interval=None,
+    custom_callbacks=None,
+    expects_fit_exception=False,
+):
+def _run_eval(tmp_path, which='not set'):
+def test_finished_fit_with_iter_limit(tmp_path, run_rank_monitors):
+def test_finished_fit_after_all_read(tmp_path, run_rank_monitors):
+def test_finished_fit_with_time_limit(tmp_path, run_rank_monitors):
+def test_timeouts_updated_when_graceful_stop(tmp_path, run_rank_monitors):
+def test_timeouts_updated_when_exc(tmp_path, run_rank_monitors):
+def test_timeouts_updated_when_sys_exit(tmp_path, run_rank_monitors):
+def test_simulated_fault(tmp_path):
 
-third_party/nvidia-resiliency-ext/src/nvidia_resiliency_ext/attribution/straggler/dist_utils.py
-def all_gather_object(obj, group):
-def get_world_size(group):
-def get_rank(group):
-def get_device_for_backend(group):
-def all_reduce(tensor, op=torch.distributed.ReduceOp.SUM, group=None, async_op=False):
-def gather_on_rank0(tensor, group=None):
+third_party/nvidia-resiliency-ext/tests/ptl_resiliency/unit/test_ft_callback_sections.py
+def tmp_path():
+def _get_ft_test_config():
+def run_rank_monitors(request):
+def ipc_connector(tmp_path):
+def _create_test_logger(logger_name, log_file_path):
+def _run_trainining(
+    tmp_path,
+    max_steps=100_000,
+    max_epochs=4,
+    max_time=None,
+    val_check_interval=None,
+    chkpt_save_interval=None,
+    custom_callbacks=None,
+    expects_fit_exception=False,
+    ft_exc_handling_policy=None,
+):
+def _get_ft_state(exp_dir):
+def _get_timeout_updates_count(log_file_path):
+def _run_eval(tmp_path, which='not set'):
+def test_finished_fit_with_iter_limit(tmp_path, run_rank_monitors):
+def test_eval_with_callback(tmp_path, run_rank_monitors):
+def test_finished_fit_after_all_read(tmp_path, run_rank_monitors):
+def test_finished_fit_with_time_limit(tmp_path, run_rank_monitors):
+def test_timeouts_updated_when_graceful_stop(tmp_path, run_rank_monitors):
+def test_timeouts_updated_when_exc(tmp_path, run_rank_monitors):
+def test_timeouts_updated_when_sys_exit(tmp_path, run_rank_monitors):
+def test_simulated_fault(tmp_path):
+def _get_ft_test_config_no_step_section():
+def _get_ft_test_config_unknown_sections():
+def test_invalid_config(tmp_path, run_rank_monitors):
+def test_workload_ctrl_messages(tmp_path, run_rank_monitors, ipc_connector):
 
-third_party/nvidia-resiliency-ext/src/nvidia_resiliency_ext/fault_tolerance/ft_rendezvous_barrier.py
-def _rdzv_signal_exception_handler(sig: int, frame: Optional[FrameType]) -> None:
-    del frame
-    raise SignalException(f"Received signal {sig} during rendezvous", signal.Signals(sig))
-def _install_rdzv_signal_handlers() -> Dict[signal.Signals, Any]:
-    prev_handlers: Dict[signal.Signals, Any] = {}
-    for sig_to_handle in (signal.SIGTERM, signal.SIGINT):
-def _restore_rdzv_signal_handlers(prev_handlers: Dict[signal.Signals, Any]) -> None:
-    for sig_to_handle, handler in prev_handlers.items():
-def get_method_name(depth=2):
-def _parse_domain_id_from_nvidia_smi() -> str:
-    """Parse domain ID from GPU using nvidia-smi to query ClusterUUID.
-    The ClusterUUID serves as the domain identifier.
-    All GPUs in the same NVLink domain share the same ClusterUUID.
-    Returns:
-        The ClusterUUID as the domain ID string.
-    Raises:
-        RuntimeError: If ClusterUUID cannot be retrieved.
-    Example:
-        >>> domain_id = _parse_domain_id_from_nvidia_smi()
-        >>> # domain_id is "abc9829a-d4c8-491c-8da5-ad28fb34876b"
-    """
-    import subprocess
+third_party/nvidia-resiliency-ext/src/nvidia_resiliency_ext/shared_utils/wait_daemon.py
+def wait_for_pids(pids: List[int]) -> None:
+    """Wait for all specified PIDs to finish."""
+    print(f"Monitoring {len(pids)} PIDs: {pids}")
+    while pids:
+        finished_pids = []
+        for pid in pids:
+            try:
+                # Check if process exists by sending signal 0
+                os.kill(pid, 0)
+            except OSError:
+                # Process has finished or doesn't exist
+                finished_pids.append(pid)
+        # Remove finished/invalid PIDs from the monitoring list
+        for pid in finished_pids:
+            pids.remove(pid)
+            print(f"PID {pid} has finished or is invalid. {len(pids)} PIDs remaining: {pids}")
+        if pids:
+            time.sleep(1)
+def read_pids_from_file(pidfile: str) -> List[int]:
+    """Read PIDs from a file."""
+    pids = []
     try:
-        # Run nvidia-smi to query ClusterUUID
-        result = subprocess.run(
-            ['nvidia-smi', '-q'],
-            capture_output=True,
-            text=True,
-            timeout=10,
-            check=False,
-        )
-        if result.returncode != 0:
-            raise RuntimeError(
-                f"nvidia-smi command failed with return code {result.returncode}. "
-                f"stderr: {result.stderr}"
-            )
-        # Parse output to find ClusterUUID
-        cluster_uuid = None
-        for line in result.stdout.split('\n'):
-
-third_party/nvidia-resiliency-ext/src/nvidia_resiliency_ext/shared_utils/health_check.py
-def _run_shell(cmd: str, timeout: int = 55) -> tuple[int, str, str]:
-    try:
-        proc = subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=timeout)
-        return proc.returncode, proc.stdout or "", proc.stderr or ""
-    except subprocess.TimeoutExpired as e:
-        return -9, e.stdout or "", e.stderr or "timeout"
-    except Exception as e:
-        return -1, "", str(e)
-# Adds basic thread safety, allowing to run health checks from multiple threads.
-# This is needed for rendezvous unit tests. NOTE: It will work as long as each
-# function/method that uses NVML performs NVML initialization and shutdown.
-# Please follow this pattern when adding new code.
-_nvml_lock = threading.RLock()
-def with_pynvml_lock(func):
-
-third_party/nvidia-resiliency-ext/src/nvidia_resiliency_ext/attribution/trace_analyzer/fr_attribution.py
-def eprint(*args, **kwargs):
+        with open(pidfile, 'r') as f:
+            for line in f:
+                line = line.strip()
+                if line and line.isdigit():
+def wait_daemon(pidfile: str) -> None:
+    """Main function to wait for daemon processes."""
+    # If PID file doesn't exist, exit immediately
+    if not os.path.exists(pidfile):
 def main():
 
-third_party/nvidia-resiliency-ext/src/nvidia_resiliency_ext/shared_utils/log_aggregator.py
+third_party/nvidia-resiliency-ext/tests/ptl_resiliency/func/nemo20/straggler_test_llama3.py
+def straggler_det_callback(
+    report_time_interval=20, stop_if_detected=False
+) -> run.Config[StragglerDetectionCallback]:
+    return run.Config(
+        StragglerDetectionCallback,
+        report_time_interval=report_time_interval,
+        calc_relative_gpu_perf=True,
+        calc_individual_gpu_perf=True,
+        num_gpu_perf_scores_to_print=5,
+        gpu_relative_perf_threshold=0.7,
+        gpu_individual_perf_threshold=0.7,
+        stop_if_detected=stop_if_detected,
+        enable_ptl_logging=True,
+    )
+def step_timing_callback() -> run.Config[TimingCallback]:
+    return run.Config(TimingCallback)
+def local_executor(
+    nodes=1, devices=8, ft=False, retries=0, container_image="", time=""
+) -> run.LocalExecutor:
+    env_vars = {
+        "TORCH_NCCL_AVOID_RECORD_STREAMS": "1",
+        "NCCL_NVLS_ENABLE": "0",
+        "NVTE_DP_AMAX_REDUCE_INTERVAL": "0",
+        "NVTE_ASYNC_AMAX_REDUCTION": "1",
+    }
+    executor = run.LocalExecutor(ntasks_per_node=devices, launcher="torchrun", env_vars=env_vars)
+    return executor
+def print_rank0(msg):
+def get_parser():
 def main():
 
-third_party/nvidia-resiliency-ext/src/nvidia_resiliency_ext/fault_tolerance/dict_utils.py
-def extract_matching_values(
-    x: Union[dict, list],
-    predicate: Callable[[Any], bool],
-    return_lists_as_dicts: bool = False,
-) -> Tuple[Union[dict, list], Union[dict, list]]:
-    """Return matching and nonmatching values. Keeps hierarchy.
-    Args:
-        x (Union[dict, list]) :
-def diff(x1: Any, x2: Any, prefix: Tuple = ()) -> Tuple[list, list, list]:
-    """Recursive diff of dicts.
-    Args:
-        x1 (object):
-def inspect_types(x: Any, prefix: Tuple = (), indent: int = 4):
-def nested_values(x: Union[dict, list]):
-def nested_items_iter(x: Union[dict, list]):
-def dict_map(f: Callable, d: dict):
-def dict_map_with_key(f: Callable, d: dict):
-def dict_list_map_inplace(f: Callable, x: Union[dict, list]):
-def dict_list_map_outplace(f: Callable, x: Union[dict, list]):
-def merge(x1: dict, x2: dict, key: Tuple[str, ...] = ()):
-def map_reduce(
-    xs: Iterable,
-    key_fn: Callable = lambda x: x,
-    value_fn: Callable = lambda x: x,
-    reduce_fn: Callable = lambda x: x,
-) -> dict:
-    """Simple map-reduce implementation following `more_itertools.map_reduce` interface."""
-    res = defaultdict(list)
-    for x in xs:
-        res[key_fn(x)].append(value_fn(x))
-    for k in res:
-        res[k] = reduce_fn(res[k])
-    return dict(res)
-def merge_state_dicts_(current, incoming) -> None:
-    # Recursively add new keys to `current`
-    # Keys that already exists in the `current` will be overwritten
-    for key, value in incoming.items():
-def merge_namespaces_(ns1, ns2) -> None:
-    """Merge attributes of ns2 into ns1."""
-    for key, value in vars(ns2).items():
-def compare_namespaces(ns1, ns2):
-def merge_namespace_changes(original_ns, changes):
-def compare_state_dicts_and_get_new_values(curr_state, new_state):
+third_party/nvidia-resiliency-ext/tests/shared_utils/test_logger.py
+def create_test_workspace(clean: bool = True):
+def setup_vars(global_id, local_id, file_size, max_file_num=None, dbg_on="0"):
+def gen_log_msg(logger, num_msg, log_type="info"):
+def worker_process(id, num_msg, file_size):
 
-third_party/nvidia-resiliency-ext/src/nvidia_resiliency_ext/checkpointing/async_ckpt/core.py
-def abort_nvrx_checkpoint():
+third_party/nvidia-resiliency-ext/tests/fault_tolerance/unit/utils.py
+def assert_fn(arg):
+def is_port_open(host, port):
+def find_free_port(host="127.0.0.1"):
+def setup_distributed_worker_tcp_store(
+    rank,
+    world_size,
+    queue,
+    barrier,
+    backend,
+):
+def setup_distributed_worker_file_store(
+    rank,
+    world_size,
+    queue,
+    barrier,
+    backend,
+):
+def distributed_worker(
+    rank,
+    world_size,
+    dist_store_type,
+    queue,
+    barrier,
+    ready_flag,
+    worker_fn,
+    backend,
+    **kwargs,
+):
+def multiprocessing_execute_start(
+    worker_fn,
+    mp_ctx,
+    world_size=2,
+    dist_store_type="file",
+    backend="nccl",
+    **kwargs,
+):
+def multiprocessing_execute_join(processes, timeout):
 
-third_party/nvidia-resiliency-ext/src/nvidia_resiliency_ext/attribution/combined_log_fr/combined_log_fr.py
-def main():
-
-third_party/nvidia-resiliency-ext/src/nvidia_resiliency_ext/attribution/mcp_integration/module_definitions.py
-def register_all_modules():
-def create_args_from_dict(module_name: str, config: dict) -> argparse.Namespace:
-    """
-    Create an argparse.Namespace from a configuration dictionary.
-    Args:
-        module_name: Name of the module
-        config: Configuration dictionary
-    Returns:
-        argparse.Namespace with module configuration
-    """
-    metadata = global_registry.get_module_metadata(module_name)
-    if not metadata:
-        raise ValueError(f"Module '{module_name}' not found in registry")
-    # Get schema defaults
-    schema = metadata.input_schema
-    properties = schema.get("properties", {})
-    # Build args with defaults
-    args_dict = {}
-    for prop_name, prop_schema in properties.items():
-
-third_party/nvidia-resiliency-ext/src/nvidia_resiliency_ext/shared_utils/storage_probe.py
-def _storage_path_probe(paths: Optional[list[str]] = None) -> dict:
-    """
-    Probe a list of paths and return a dict with keys: invalid, missing, unreadable.
-    This function is invoked inside a short-lived subprocess to avoid hangs on
-    remote filesystems access.
-    """
-    invalid: list[str] = []
-    missing: list[str] = []
-    unreadable: list[str] = []
-    if not paths:
-        logger.debug("storage probe invoked with no paths; treating as success")
-        return {"invalid": invalid, "missing": missing, "unreadable": unreadable}
-    for p in paths:
-        # Skip None and empty strings
-        if not p:
-            continue
-        # Ensure p is a string (defensive check)
-        if not isinstance(p, str):
-
-third_party/nvidia-resiliency-ext/tests/inprocess/test_app.py
-def launch(fn, **kwargs):
-
-third_party/nvidia-resiliency-ext/src/nvidia_resiliency_ext/attribution/mcp_integration/registry.py
-def serialize_result(result: Any) -> str:
-    """Serialize attribution result to JSON string."""
-    if result is None:
-        return json.dumps(None)
-    if is_dataclass(result):
+third_party/nvidia-resiliency-ext/tests/fault_tolerance/unit/test_launcher_grpc_integration.py
+def tmp_dir():
+def _run_launcher(cmd_to_run, timeout=DEFAULT_TIMEOUT):
+def _save_ft_cfg(cfg, dirpath):
+def _get_util_script_path():
+def test_grpc_server_can_start_and_shutdown():
+def test_grpc_server_health_check():
+def _wait_for_grpc_server_ready(port, timeout=10.0, poll_interval=0.2):
+def _wait_for_file_content(path, required_substrings, timeout=5.0, poll_interval=0.1):
+def test_grpc_client_can_connect_and_stream_logs(tmp_dir):
+def test_launcher_starts_grpc_server_on_correct_port(tmp_dir):
+def test_launcher_creates_grpc_server_log(tmp_dir):
+def test_launcher_without_grpc_flag_does_not_start_server(tmp_dir):
+def test_launcher_custom_server_log_path(tmp_dir):
 
 third_party/nvidia-resiliency-ext/src/nvidia_resiliency_ext/fault_tolerance/per_cycle_logs.py
 def _should_filter_line(line: str) -> bool:
@@ -691,101 +999,362 @@ def _should_filter_line(line: str) -> bool:
     if first_char.isdigit() and _DEVICE_ENTRY_PATTERN.match(stripped):
 def _patch_subprocess_handler_once():
 
-third_party/nvidia-resiliency-ext/src/nvidia_resiliency_ext/fault_tolerance/c10d_monkey_patch.py
-def _patched_create_tcp_store(params: "RendezvousParameters") -> "TCPStore":  # noqa: F821
-    """
-    Patched version of _create_tcp_store that supports use_libuv parameter.
-    This function is identical to the original _create_tcp_store except it
-    extracts and uses the use_libuv parameter from RendezvousParameters.
-    """
-    import os
-    from datetime import timedelta
-    from typing import cast
-    from torch.distributed import TCPStore
-    from torch.distributed.elastic.events import NodeState, construct_and_record_rdzv_event
-    from torch.distributed.elastic.rendezvous.api import RendezvousConnectionError
-    from torch.distributed.elastic.rendezvous.c10d_rendezvous_backend import (
-        _matches_machine_hostname,
-        parse_rendezvous_endpoint,
-    )
-    # Default port for TCP store (29400) - defined locally for PyTorch 2.3.1 compatibility
-    DEFAULT_PORT = 29400
-    host, port = parse_rendezvous_endpoint(params.endpoint, default_port=DEFAULT_PORT)
-    cfg_is_host = params.get_as_bool("is_host")
-    # If the user has explicitly specified whether our process should host the
-    # the store, respect it.
-    if cfg_is_host is not None:
-        is_host = cfg_is_host
-    # Otherwise try to determine whether we are the host based on our hostname
-    # and IP address.
-    else:
-        is_host = _matches_machine_hostname(host)
-    # The timeout
-    read_timeout = cast(int, params.get_as_int("read_timeout", 60))
-    if read_timeout <= 0:
-        raise ValueError("The read timeout must be a positive integer.")
-    # The use_libuv parameter - NEW FUNCTIONALITY
-    use_libuv = params.get_as_bool("use_libuv", True)
-    # In specific cases we attempt to instantiate the store twice. For details
-    # see the explanation in the except clause below.
-    for is_server in [is_host, False]:
-        try:
-            store = TCPStore(
-                host,
-                port,
-                is_master=is_server,
-                multi_tenant=True,
-                timeout=timedelta(seconds=read_timeout),
-                use_libuv=use_libuv,  # NEW PARAMETER
-            )
-            if is_server:
-                msg = f"Process {os.getpid()} hosts the TCP store for the C10d rendezvous backend."
-                construct_and_record_rdzv_event(
-                    run_id=params.run_id, message=msg, node_state=NodeState.INIT
-                )
-                logger.info(msg)
-            break
-        except (ValueError, RuntimeError, TimeoutError) as exc:
-            # If we heuristically inferred the value of is_host as True and our
-            # first attempt to instantiate the TCP store has failed, try it one
-            # more time with is_host set to False. As an edge case there can be
-            # more than one process that is part of the same rendezvous on this
-            # machine and only one of them will eventually host the store.
-            if not is_server or cfg_is_host is not None:
-                raise RendezvousConnectionError(
-                    "The connection to the C10d store has failed. See inner exception for details."
-                ) from exc
-    return store  # type: ignore[possibly-undefined]
-def apply_c10d_patch():
+third_party/nvidia-resiliency-ext/tests/fault_tolerance/unit/conftest.py
+def pytest_configure():
+def pytest_sessionfinish(session, exitstatus):
+
+third_party/nvidia-resiliency-ext/tests/straggler/unit/test_data_shared.py
+def _get_summary(timings):
+def _test_num_of_all_gather_object_calls(*args, **kwargs):
+def test_all_gather_object_calls_num():
+
+third_party/nvidia-resiliency-ext/src/nvidia_resiliency_ext/checkpointing/async_ckpt/core.py
+def abort_nvrx_checkpoint():
+
+third_party/nvidia-resiliency-ext/tests/fault_tolerance/unit/_launcher_test_util.py
+def test_rank_not_send_initial_hb(args):
+def test_rank_failed(args):
+def test_ranks_exit_gracefully(args):
+def test_with_sigterm(args):
+def test_dump_ft_config(args):
+def _get_restart_cnt(tmp_dir, update=False):
+
+third_party/nvidia-resiliency-ext/tests/straggler/unit/test_reporting.py
+def parse_args():
+def setup_distributed():
+def skip_if_condition(test_scenario):
+def test_reporting_options(test_scenario, monkeypatch):
+def test_no_gather_called(monkeypatch):
+
+third_party/nvidia-resiliency-ext/tests/fault_tolerance/unit/test_shutdown.py
+def _get_ft_test_config():
+def _set_rmon_socket_env_var_for_this_rank():
+def _run_rank_monitors_fixture():
+def _rank_main(*args, rank_ready_events, **kwargs):
+def wait_for_process(pid, timeout):
+def _send_sig(sig, pids):
+def test_shutdown(test_scenario):
+def _rank_main_explicit_shutdown(*args, rank_ready_events, **kwargs):
+def test_explicit_shutdown():
+
+third_party/nvidia-resiliency-ext/tests/straggler/unit/test_name_mapper.py
+def _get_summary(timings):
+def test_name_mapper_gather():
+def test_name_mapper_no_gather():
+def _test_mapping_consitiency_no_gather_on_rank0(ret_queue):
+def test_mapping_consitiency_no_gather_on_rank0():
+def _test_mapping_consitiency_with_gather_on_rank0(ret_queue):
+def test_mapping_consitiency_with_gather_on_rank0():
+
+third_party/nvidia-resiliency-ext/tests/straggler/unit/test_wrap_callables.py
+def _rank_main(*args, test_scenario, ret_queue, **kwargs):
+def test_straggler_sections_detected(test_scenario):
+
+third_party/nvidia-resiliency-ext/tests/fault_tolerance/unit/test_init.py
+def _get_ft_test_config():
+def _install_signal_handler():
+def _set_rmon_socket_env_var_for_this_rank():
+def _run_rank_monitors_fixture():
+def _rank_main_all_ranks_initialized(*args, **kwargs):
+def _rank_main_no_initial_heartbeat_from_rank_0(*args, **kwargs):
+def _rank_main_no_initial_heartbeats(*args, **kwargs):
+def test_init(rank_main, is_chkpt_expected, expected_ret_codes):
 
 third_party/nvidia-resiliency-ext/src/nvidia_resiliency_ext/shared_utils/grpc_log_server.py
 def serve(host: str, port: int, max_workers: int = 100, graceful_shutdown_timeout: float = 60.0):
 def main():
 
-third_party/nvidia-resiliency-ext/src/nvidia_resiliency_ext/shared_utils/os_utils.py
-def validate_directory(dir_path: str) -> None:
-    """
-    Validate that a directory is safe for file operations.
-    This function performs comprehensive security checks to ensure the directory
-    is safe from symlink attacks and has appropriate permissions.
-    Args:
-        dir_path: Path to the directory to validate
-    Raises:
-        OSError: If the directory is unsafe or inaccessible
-    """
-    if not os.path.exists(dir_path):
-def validate_filepath(file_path: str) -> None:
-    """
-    Validate that a file path is safe for file operations.
-    This function checks that the file (if it exists) is not a symlink and is a regular file.
-    Args:
-        file_path: Path to the file to validate
-    Raises:
-        OSError: If the file is unsafe or inaccessible
-    """
-    if os.path.exists(file_path):
+third_party/nvidia-resiliency-ext/tests/fault_tolerance/unit/test_ipc_connector.py
+def _sender_process(rank):
+def test_ipc_connector_send_receive():
 
-third_party/nvidia-resiliency-ext/src/nvidia_resiliency_ext/attribution/mcp_integration/server_launcher.py
+third_party/nvidia-resiliency-ext/tests/straggler/unit/test_cupti_manager.py
+def test_cupti_manager_start_stop():
+def test_cupti_manager_captures_all_started_kernels():
+
+third_party/nvidia-resiliency-ext/tests/straggler/unit/test_individual_gpu_scores.py
+def _get_summary(timings):
+def test_individual_gpu_scores_one_rank():
+def _rank_main_gpu_indiv_test(*args, gather_on_rank0, ret_queue, **kwargs):
+def test_individual_gpu_scores_gather_on_rank0():
+def test_individual_gpu_scores_no_gather():
+
+third_party/nvidia-resiliency-ext/tests/fault_tolerance/unit/test_timeouts_calc.py
+def tmp_dir():
+def test_with_heartbeats():
+def test_with_custom_sections():
+def test_with_sections_subset():
+def test_section_timeouts_merging():
+def test_get_merged_section_timeouts():
+def test_end_all_sections():
+def _rank_main(*args, tmp_dir, **kwargs):
+def test_distributed(tmp_dir):
+
+third_party/nvidia-resiliency-ext/tests/straggler/unit/test_sections.py
+def _dummy_section_work(section_name, rank, test_scenario, is_slow_iter=False):
+def _rank_main(*args, test_scenario, ret_queue, **kwargs):
+def test_straggler_sections_detected(test_scenario):
+
+third_party/nvidia-resiliency-ext/tests/fault_tolerance/unit/test_dynamic_rendezvous.py
+def _extract_rendezvous_info(rendezvous_result) -> Tuple[int, int]:
+    """Extract rank and world_size from either RendezvousInfo or tuple.
+    Args:
+        rendezvous_result: Either a RendezvousInfo object or a tuple (store, rank, world_size)
+    Returns:
+        Tuple of (rank, world_size)
+    """
+    try:
+        # Try to access as RendezvousInfo object
+        return rendezvous_result.rank, rendezvous_result.world_size
+    except AttributeError:
+        # Fall back to tuple format (store, rank, world_size)
+        return rendezvous_result[1], rendezvous_result[2]
+def _extract_store(rendezvous_result) -> Store:
+    """Extract store from either RendezvousInfo or tuple.
+    Args:
+        rendezvous_result: Either a RendezvousInfo object or a tuple (store, rank, world_size)
+    Returns:
+        Store object
+    """
+    try:
+        # Try to access as RendezvousInfo object
+        return rendezvous_result.store
+    except AttributeError:
+        # Fall back to tuple format (store, rank, world_size)
+        return rendezvous_result[0]
+class CustomAssertMixin:
+    assertDictEqual: Callable
+    def assert_state_equal(self, actual: _RendezvousState, expected: _RendezvousState) -> None:
+        self.assertDictEqual(vars(actual), vars(expected))
+    def assert_state_empty(self, actual: _RendezvousState) -> None:
+        self.assertDictEqual(vars(actual), vars(_RendezvousState()))
+# Basic classes like RendezvousTimeout, NodeDesc, NodeDescGenerator are unchanged from upstream PyTorch
+# and are well-tested there. We focus on FT-specific functionality.
+class AssignRanksTest(TestCase):
+def _ignore_exception(exception_type: Exception, fn: Callable):
+def _wait_for(condition, timeout=30, interval=1, name=None):
+
+third_party/nvidia-resiliency-ext/tests/straggler/unit/test_det_section_api.py
+def _straggler_init_shutdown():
+def _straggler_shutdown_at_exit():
+def test_fail_if_not_initialized():
+def test_unique_name_is_enforced(_straggler_init_shutdown):
+def test_default_names_are_unique(_straggler_init_shutdown):
+def test_with_block_location_is_used(_straggler_init_shutdown):
+def test_periodic_capture(_straggler_shutdown_at_exit):
+def test_cuda_profiling_disabled(_straggler_shutdown_at_exit):
+def test_can_handle_empty_elapseds(_straggler_init_shutdown):
+
+third_party/nvidia-resiliency-ext/tests/straggler/unit/test_relative_gpu_scores.py
+def _get_summary(timings):
+def test_relative_gpu_scores_one_rank():
+def _rank_main_gpu_relative_test(*args, gather_on_rank0, ret_queue, **kwargs):
+def test_relative_gpu_scores_gather_on_rank0():
+def test_relative_gpu_scores_no_gather():
+def _rank_main_gpu_relative_test_some_common_kernels(*args, gather_on_rank0, ret_queue, **kwargs):
+def test_relative_gpu_scores_some_common_kernels():
+def _rank_main_gpu_relative_test_no_common_kernels_in_rank(
+    *args,
+    ranks_with_unique_kernels=(),
+    ranks_without_kernels=(),
+    gather_on_rank0=True,
+    ret_queue,
+    **kwargs,
+):
+def test_relative_gpu_scores_ranks_with_unique_kernels():
+def test_relative_gpu_scores_ranks_without_kernels():
+
+third_party/nvidia-resiliency-ext/tests/fault_tolerance/unit/test_timeouts.py
+def _install_signal_handler():
+def tmp_dir():
+def _set_rmon_socket_env_var_for_this_rank():
+def rank_monitors_running(ft_cfg, mp_ctx):
+def _rank_main_1st_run(*args, tmp_dir, **kwargs):
+def _rank_main_2nd_run(*args, tmp_dir, **kwargs):
+def _rank_main_3nd_run(*args, tmp_dir, **kwargs):
+def test_timeouts(tmp_dir):
+
+third_party/nvidia-resiliency-ext/tests/straggler/unit/test_cupti_ext.py
+def test_basic_kernel_tracking():
+def test_tracking_start_stop():
+def test_reset():
+def test_max_stats_per_kernel():
+def test_profiler_is_singleton():
+def test_with_cuda_graph():
+
+third_party/nvidia-resiliency-ext/tests/fault_tolerance/unit/test_config.py
+def test_from_kwargs():
+def test_from_args():
+def test_signal_field_with_valid_values():
+def test_signal_field_with_invalid_values():
+def test_log_level_field_with_valid_values(level_to_set, expected_level):
+def test_log_level_field_with_invalid_values():
+def tmp_yaml_file(lines):
+def test_read_from_yaml():
+def test_read_from_yaml_nested():
+def test_fails_when_missing_ft_section():
+def test_fails_when_ft_section_has_invald_items():
+def test_to_yaml_file():
+
+third_party/nvidia-resiliency-ext/tests/fault_tolerance/unit/test_launcher.py
+def tmp_dir():
+def _get_func_name():
+def _run_launcher(cmd_to_run, timeout):
+def _save_ft_cfg(cfg, dirpath):
+def _get_util_script_path():
+def test_rank_not_send_initial_hb(tmp_dir):
+def test_rank_failed(tmp_dir):
+def test_ranks_exit_gracefully(tmp_dir):
+def test_launcher_sigterm_graceful_exit(tmp_dir):
+def test_launcher_sigterm_ignored(tmp_dir):
+def test_ranks_restart(tmp_dir):
+def test_missing_cfg(tmp_dir):
+def test_config_provided_via_cli(tmp_dir):
+def test_config_provided_via_cli_overwrites_yaml(tmp_dir):
+
+third_party/nvidia-resiliency-ext/tests/straggler/unit/test_interval_tracker.py
+def test_estimate():
+
+third_party/nvidia-resiliency-ext/tests/fault_tolerance/func/nodehc_service.py
+def _ensure_parent_dir(path: str) -> None:
+    parent = os.path.dirname(path)
+    if parent and not os.path.exists(parent):
+def _cleanup_socket(path: str) -> None:
+    try:
+        if os.path.exists(path) and not os.path.isdir(path):
+def parse_args(argv):
+def main(argv=None) -> int:
+    args = parse_args(argv or sys.argv[1:])
+    # Determine success
+    success = True
+    if args.fail:
+        success = False
+    elif args.success:
+        success = True
+    # Prepare socket
+    uds_path = args.socket
+    _ensure_parent_dir(uds_path)
+    _cleanup_socket(uds_path)
+    # Create server
+    server = grpc.server(futures.ThreadPoolExecutor(max_workers=4))
+    servicer = HealthCheckService(
+        success=success,
+        exit_code=args.exit_code,
+        output=args.output,
+        error=args.error,
+        echo_args=bool(args.echo_args),
+        sleep_seconds=int(args.sleep_seconds or 0),
+    )
+    nvhcd_pb2_grpc.add_HealthCheckServiceServicer_to_server(servicer, server)
+    target = f"unix://{uds_path}"
+    server.add_insecure_port(target)
+    # Graceful shutdown on SIGTERM/SIGINT
+    stopped = {"flag": False}
+    def handle_signal(signum, frame):
+
+third_party/nvidia-resiliency-ext/tests/fault_tolerance/unit/test_reconnect.py
+def _get_ft_test_config():
+def _set_rmon_socket_env_var_for_this_rank():
+def rank_monitors_fixture():
+def _rank_main(*args, rank_ready_events, **kwargs):
+def _send_sig(sig, pids):
+def test_reconnect(rank_monitors_fixture):
+
+third_party/nvidia-resiliency-ext/tests/straggler/unit/test_reporting_elapsed.py
+def parse_args():
+def setup_distributed():
+def skip_if_condition(test_scenario):
+def test_report_elapsed_wrap_callables(test_scenario):
+def test_report_elapsed_det_section(test_scenario):
+def test_report_min_interval_is_profiling_interval():
+
+third_party/nvidia-resiliency-ext/src/nvidia_resiliency_ext/shared_utils/log_manager.py
+def setup_logger(
+    node_local_tmp_dir=None,
+    force_reset=False,
+    node_local_tmp_prefix: str = None,
+    log_file: Optional[str] = None,
+) -> logging.Logger:
+    """
+    Setup the distributed logger.
+    This function configures the standard Python logger "nvrx" with appropriate
+    handlers for distributed logging. It's safe to call multiple times - if the
+    logger is already configured, it won't be reconfigured unless force_reset=True.
+    The expectation is that this function is called once at the start of the program,
+    and then the logger is used throughout the program i.e. its a singleton.
+    The logger automatically adapts to distributed or regular mode based on
+    whether NVRX_NODE_LOCAL_TMPDIR is set. If set, enables distributed logging
+    with aggregation. If not set, logs go directly to stderr/stdout.
+    The logger is fork-safe: all ranks use file-based message passing to ensure
+    child processes can log even when they don't inherit the aggregator thread.
+    Args:
+        node_local_tmp_dir: Optional directory path for temporary files. If None, uses NVRX_NODE_LOCAL_TMPDIR env var.
+        force_reset: If True, force reconfiguration even if logger is already configured.
+                    Useful for subprocesses that need fresh logger setup.
+        node_local_tmp_prefix: Optional prefix for log files (e.g. "ftlauncher").
+        log_file: Optional path to log file. When specified, logs are written to this file
+                 with rank prefixes (like srun -l) instead of console. All processes write
+                 to the same file using append mode for safe concurrent writes.
+    Returns:
+        logging.Logger: Configured logger instance
+    Example:
+        # In main script (launcher.py) or training subprocess
+        from nvidia_resiliency_ext.shared_utils.log_manager import setup_logger
+        logger = setup_logger()
+        # With log file for consolidated logging across all ranks/nodes
+        logger = setup_logger(log_file="/path/to/base.log")
+        # In subprocesses that need fresh logger setup
+        logger = setup_logger(force_reset=True)
+        # In other modules
+        import logging
+        logger = logging.getLogger(LogConfig.name)
+        logger.info("Some message")
+    """
+    # Check if the nvrx logger is already configured
+    logger = logging.getLogger(LogConfig.name)
+    # If force_reset is True or the logger has no handlers, configure it
+    if force_reset or not logger.handlers:
+        # Clear existing handlers if force_reset is True
+        if force_reset:
+            for handler in logger.handlers[:]:
+                logger.removeHandler(handler)
+            # Clear any stored log manager to force fresh creation
+            if hasattr(setup_logger, '_log_manager'):
+
+third_party/nvidia-resiliency-ext/tests/fault_tolerance/unit/test_shutdown_sections.py
+def _get_ft_test_config():
+def _set_rmon_socket_env_var_for_this_rank():
+def _run_rank_monitors_fixture():
+def wait_for_process(pid, timeout):
+def _send_sig(sig, pids):
+def _rank_main_with_step(*args, rank_ready_events, **kwargs):
+def test_shutdown_due_to_step_section_timeout():
+
+third_party/nvidia-resiliency-ext/tests/fault_tolerance/func/_launcher_mode_test_worker.py
+def _sigusr_handler(signum, frame, world_size_file):
+def update_run_cnt(run_cnt_file):
+def increment_world_size(world_size_file):
+def decrement_world_size(world_size_file):
+def parse_arguments():
+
+third_party/nvidia-resiliency-ext/tests/fault_tolerance/unit/test_timeouts_sections.py
+def _install_signal_handler():
+def tmp_dir():
+def _set_rmon_socket_env_var_for_this_rank():
+def rank_monitors_running(ft_cfg, mp_ctx):
+def _rank_main_1st_run(*args, tmp_dir, **kwargs):
+def _rank_main_2nd_run(*args, tmp_dir, **kwargs):
+def test_timeouts(tmp_dir):
+
+third_party/nvidia-resiliency-ext/tests/straggler/func/ddp_test.py
+def parse_args():
+def round_float_values(d: Dict) -> Dict:
+    return {k: round(v, 2) for k, v in d.items()}
+def print_gpu_scores(report, rank):
+def print_section_scores(report, rank):
+def print_stragglers(stragglers):
+def _all_reduce_bool_flag(flag):
+def print_rank0(msg):
 def main():
 
 third_party/nvidia-resiliency-ext/src/nvidia_resiliency_ext/fault_tolerance/utils.py
@@ -876,673 +1445,6 @@ def get_processes_by_pgids(pgids, exclude_launcher=True):
 def patched_method(obj, method_name, new_method):
 def install_exception_handler():
 
-third_party/nvidia-resiliency-ext/tests/inprocess/test_torch.py
-def abort_process_group():
-
-third_party/nvidia-resiliency-ext/src/nvidia_resiliency_ext/fault_tolerance/_ft_rendezvous.py
-def get_method_name(depth=2):
-def _is_final_workers_state(state: WorkerState) -> bool:
-    # Final worker group state once reached will not be changed
-    return state in {WorkerState.SUCCEEDED, WorkerState.FAILED, WorkerState.UNKNOWN}
-def _remove_participant_epilogue(state: _RendezvousState, settings: RendezvousSettings) -> None:
-    if state.complete:
-        # If we do not have any participants left, move to the next round.
-        if not state.participants:
-            msg = "No participants left in the rendezvous, marking rendezvous as incomplete"
-            log.debug(msg)
-            state.complete = False
-            state.round += 1
-    else:
-        if len(state.participants) < settings.min_nodes:
-            msg = (
-                f"Number of participants {len(state.participants)}) less than"
-                f"min_nodes {settings.min_nodes}, clearning deadline in state"
-            )
-            log.debug(msg)
-            state.deadline = None
-class _RendezvousStateHolder(ABC):
-def _should_keep_alive(ctx: _RendezvousContext) -> bool:
-    """Determine whether a keep-alive heartbeat should be sent."""
-    try:
-        last_heartbeat = ctx.state.last_heartbeats[ctx.node]
-    except KeyError:
-        return False
-    return last_heartbeat <= datetime.utcnow() - ctx.settings.keep_alive_interval
-class _SetWorkersStateOp:
-    def __init__(self, target_state: WorkerState):
-
-third_party/nvidia-resiliency-ext/src/nvidia_resiliency_ext/ptl_resiliency/_utils.py
-def is_module_available(module: str) -> bool:
-    import importlib
-    return importlib.util.find_spec(module) is not None
-@dataclass
-class SimulatedFaultParams:
-    """
-    Description of a simulated rank fault, used for FT testing and debugging.
-    Simulated fault types are:
-    - 'rank_killed' a rank is killed with SIGKILL
-    - 'rank_hung' a rank is stopped with SIGSTOP
-    - 'random' randomly selects one of the above faults.
-    Fault delay is computed as:
-    - `base_delay` + RAND_FLOAT_FROM_0.0_to_1.0 * `rand_delay`
-    Attributes:
-        fault_type (str):
-def parse_simulated_fault_params(simulated_fault_params) -> Optional[SimulatedFaultParams]:
-    if simulated_fault_params is None:
-        return None
-    if isinstance(simulated_fault_params, SimulatedFaultParams):
-def setup_simulated_fault(fault_desc: SimulatedFaultParams):
-
-third_party/nvidia-resiliency-ext/src/nvidia_resiliency_ext/shared_utils/wait_daemon.py
-def wait_for_pids(pids: List[int]) -> None:
-    """Wait for all specified PIDs to finish."""
-    print(f"Monitoring {len(pids)} PIDs: {pids}")
-    while pids:
-        finished_pids = []
-        for pid in pids:
-            try:
-                # Check if process exists by sending signal 0
-                os.kill(pid, 0)
-            except OSError:
-                # Process has finished or doesn't exist
-                finished_pids.append(pid)
-        # Remove finished/invalid PIDs from the monitoring list
-        for pid in finished_pids:
-            pids.remove(pid)
-            print(f"PID {pid} has finished or is invalid. {len(pids)} PIDs remaining: {pids}")
-        if pids:
-            time.sleep(1)
-def read_pids_from_file(pidfile: str) -> List[int]:
-    """Read PIDs from a file."""
-    pids = []
-    try:
-        with open(pidfile, 'r') as f:
-            for line in f:
-                line = line.strip()
-                if line and line.isdigit():
-def wait_daemon(pidfile: str) -> None:
-    """Main function to wait for daemon processes."""
-    # If PID file doesn't exist, exit immediately
-    if not os.path.exists(pidfile):
-def main():
-
-third_party/nvidia-resiliency-ext/src/nvidia_resiliency_ext/testing_utils/health_check_injector.py
-def set_current_cycle(cycle: int) -> None:
-    """
-    Set the current rendezvous cycle for injection checking.
-    This should be called by the rendezvous handler before health checks.
-    Args:
-        cycle: The current rendezvous round/cycle number.
-    """
-    global _current_cycle
-    _current_cycle = cycle
-class HealthCheckInjector:
-    """Manages GPU health check failure injection for testing purposes."""
-    def __init__(self):
-def _get_injector() -> Optional[HealthCheckInjector]:
-    """Get the global health check injector instance, or None if not enabled."""
-    global _injector
-    if _injector is None and os.environ.get("NVRX_INJECT_GPU_FAILURE"):
-def _monkey_patch_gpu_health_check():
-
-third_party/nvidia-resiliency-ext/tests/shared_utils/test_logger.py
-def create_test_workspace(clean: bool = True):
-def setup_vars(global_id, local_id, file_size, max_file_num=None, dbg_on="0"):
-def gen_log_msg(logger, num_msg, log_type="info"):
-def worker_process(id, num_msg, file_size):
-
-third_party/nvidia-resiliency-ext/tests/ptl_resiliency/unit/test_local_ckpt_callback.py
-def _run_trainining(
-    max_steps=100_000,
-    max_epochs=3,
-    max_time=None,
-    val_check_interval=None,
-    custom_callbacks=None,
-    custom_checkpoint_io_fn=None,
-):
-def inspect_checkpoints(dirpath, expected_paths: Iterable[str] = None, verbose: bool = True):
-def test_local_ckpt_callback_called_every_n_train_steps(tmp_path):
-def test_local_ckpt_callback_called_every_time_interval(tmp_path):
-def test_local_ckpt_restoration(tmp_path, caplog):
-
-third_party/nvidia-resiliency-ext/tests/ptl_resiliency/unit/test_straggler_det_callback.py
-def tmp_path():
-def _create_test_logger(logger_name, log_file_path):
-def test_prints_perf_scores_when_fitting(tmp_path):
-def test_logs_perf_scores_when_fitting(tmp_path):
-
-third_party/nvidia-resiliency-ext/tests/fault_tolerance/func/_launcher_mode_test_worker.py
-def _sigusr_handler(signum, frame, world_size_file):
-def update_run_cnt(run_cnt_file):
-def increment_world_size(world_size_file):
-def decrement_world_size(world_size_file):
-def parse_arguments():
-
-third_party/nvidia-resiliency-ext/tests/inprocess/app.py
-def unixTimestamp():
-def parse_args(namespace=None, allow_extras=True):
-def maybe_trigger_fault(rank, world_size, args):
-def training_main():
-def train(
-    base_store: torch.distributed.TCPStore = None,
-    call_wrapper: inprocess.CallWrapper = None,
-    namespace: Optional[argparse.Namespace] = None,
-):
-def main():
-
-third_party/nvidia-resiliency-ext/tests/fault_tolerance/func/nodehc_service.py
-def _ensure_parent_dir(path: str) -> None:
-    parent = os.path.dirname(path)
-    if parent and not os.path.exists(parent):
-def _cleanup_socket(path: str) -> None:
-    try:
-        if os.path.exists(path) and not os.path.isdir(path):
-def parse_args(argv):
-def main(argv=None) -> int:
-    args = parse_args(argv or sys.argv[1:])
-    # Determine success
-    success = True
-    if args.fail:
-        success = False
-    elif args.success:
-        success = True
-    # Prepare socket
-    uds_path = args.socket
-    _ensure_parent_dir(uds_path)
-    _cleanup_socket(uds_path)
-    # Create server
-    server = grpc.server(futures.ThreadPoolExecutor(max_workers=4))
-    servicer = HealthCheckService(
-        success=success,
-        exit_code=args.exit_code,
-        output=args.output,
-        error=args.error,
-        echo_args=bool(args.echo_args),
-        sleep_seconds=int(args.sleep_seconds or 0),
-    )
-    nvhcd_pb2_grpc.add_HealthCheckServiceServicer_to_server(servicer, server)
-    target = f"unix://{uds_path}"
-    server.add_insecure_port(target)
-    # Graceful shutdown on SIGTERM/SIGINT
-    stopped = {"flag": False}
-    def handle_signal(signum, frame):
-
-third_party/nvidia-resiliency-ext/tests/fault_tolerance/unit/test_launcher_grpc_integration.py
-def tmp_dir():
-def _run_launcher(cmd_to_run, timeout=DEFAULT_TIMEOUT):
-def _save_ft_cfg(cfg, dirpath):
-def _get_util_script_path():
-def test_grpc_server_can_start_and_shutdown():
-def test_grpc_server_health_check():
-def _wait_for_grpc_server_ready(port, timeout=10.0, poll_interval=0.2):
-def _wait_for_file_content(path, required_substrings, timeout=5.0, poll_interval=0.1):
-def test_grpc_client_can_connect_and_stream_logs(tmp_dir):
-def test_launcher_starts_grpc_server_on_correct_port(tmp_dir):
-def test_launcher_creates_grpc_server_log(tmp_dir):
-def test_launcher_without_grpc_flag_does_not_start_server(tmp_dir):
-def test_launcher_custom_server_log_path(tmp_dir):
-
-third_party/nvidia-resiliency-ext/tests/fault_tolerance/unit/test_process_utils.py
-def _sleeping_process(time_to_sleep):
-def test_is_process_alive():
-def test_wait_until_process_terminated():
-
-third_party/nvidia-resiliency-ext/tests/ptl_resiliency/unit/test_ft_callback_hb.py
-def tmp_path():
-def _get_ft_test_config():
-def run_rank_monitors():
-def _create_test_logger(logger_name, log_file_path):
-def _run_trainining(
-    tmp_path,
-    max_steps=100_000,
-    max_epochs=4,
-    max_time=None,
-    val_check_interval=None,
-    custom_callbacks=None,
-    expects_fit_exception=False,
-):
-def _run_eval(tmp_path, which='not set'):
-def test_finished_fit_with_iter_limit(tmp_path, run_rank_monitors):
-def test_finished_fit_after_all_read(tmp_path, run_rank_monitors):
-def test_finished_fit_with_time_limit(tmp_path, run_rank_monitors):
-def test_timeouts_updated_when_graceful_stop(tmp_path, run_rank_monitors):
-def test_timeouts_updated_when_exc(tmp_path, run_rank_monitors):
-def test_timeouts_updated_when_sys_exit(tmp_path, run_rank_monitors):
-def test_simulated_fault(tmp_path):
-
-third_party/nvidia-resiliency-ext/tests/fault_tolerance/func/_workload_ctrl_test_worker.py
-def _sigusr1_handler(*args, **kwargs):
-def _sigusr2_handler(*args, **kwargs):
-def _sigterm_handler(*args, **kwargs):
-def get_cmd_file_content(ctl_file):
-def get_random_rank(this_rank, is_agent_rdzv_host):
-def maybe_handle_control_cmd(this_rank, ctl_file, is_agent_rdzv_host):
-def update_run_cnt(run_cnt_file):
-def parse_arguments():
-
-third_party/nvidia-resiliency-ext/src/nvidia_resiliency_ext/shared_utils/log_manager.py
-def setup_logger(
-    node_local_tmp_dir=None,
-    force_reset=False,
-    node_local_tmp_prefix: str = None,
-    log_file: Optional[str] = None,
-) -> logging.Logger:
-    """
-    Setup the distributed logger.
-    This function configures the standard Python logger "nvrx" with appropriate
-    handlers for distributed logging. It's safe to call multiple times - if the
-    logger is already configured, it won't be reconfigured unless force_reset=True.
-    The expectation is that this function is called once at the start of the program,
-    and then the logger is used throughout the program i.e. its a singleton.
-    The logger automatically adapts to distributed or regular mode based on
-    whether NVRX_NODE_LOCAL_TMPDIR is set. If set, enables distributed logging
-    with aggregation. If not set, logs go directly to stderr/stdout.
-    The logger is fork-safe: all ranks use file-based message passing to ensure
-    child processes can log even when they don't inherit the aggregator thread.
-    Args:
-        node_local_tmp_dir: Optional directory path for temporary files. If None, uses NVRX_NODE_LOCAL_TMPDIR env var.
-        force_reset: If True, force reconfiguration even if logger is already configured.
-                    Useful for subprocesses that need fresh logger setup.
-        node_local_tmp_prefix: Optional prefix for log files (e.g. "ftlauncher").
-        log_file: Optional path to log file. When specified, logs are written to this file
-                 with rank prefixes (like srun -l) instead of console. All processes write
-                 to the same file using append mode for safe concurrent writes.
-    Returns:
-        logging.Logger: Configured logger instance
-    Example:
-        # In main script (launcher.py) or training subprocess
-        from nvidia_resiliency_ext.shared_utils.log_manager import setup_logger
-        logger = setup_logger()
-        # With log file for consolidated logging across all ranks/nodes
-        logger = setup_logger(log_file="/path/to/base.log")
-        # In subprocesses that need fresh logger setup
-        logger = setup_logger(force_reset=True)
-        # In other modules
-        import logging
-        logger = logging.getLogger(LogConfig.name)
-        logger.info("Some message")
-    """
-    # Check if the nvrx logger is already configured
-    logger = logging.getLogger(LogConfig.name)
-    # If force_reset is True or the logger has no handlers, configure it
-    if force_reset or not logger.handlers:
-        # Clear existing handlers if force_reset is True
-        if force_reset:
-            for handler in logger.handlers[:]:
-                logger.removeHandler(handler)
-            # Clear any stored log manager to force fresh creation
-            if hasattr(setup_logger, '_log_manager'):
-
-third_party/nvidia-resiliency-ext/tests/fault_tolerance/unit/conftest.py
-def pytest_configure():
-def pytest_sessionfinish(session, exitstatus):
-
-third_party/nvidia-resiliency-ext/tests/ptl_resiliency/unit/test_ft_callback_sections.py
-def tmp_path():
-def _get_ft_test_config():
-def run_rank_monitors(request):
-def ipc_connector(tmp_path):
-def _create_test_logger(logger_name, log_file_path):
-def _run_trainining(
-    tmp_path,
-    max_steps=100_000,
-    max_epochs=4,
-    max_time=None,
-    val_check_interval=None,
-    chkpt_save_interval=None,
-    custom_callbacks=None,
-    expects_fit_exception=False,
-    ft_exc_handling_policy=None,
-):
-def _get_ft_state(exp_dir):
-def _get_timeout_updates_count(log_file_path):
-def _run_eval(tmp_path, which='not set'):
-def test_finished_fit_with_iter_limit(tmp_path, run_rank_monitors):
-def test_eval_with_callback(tmp_path, run_rank_monitors):
-def test_finished_fit_after_all_read(tmp_path, run_rank_monitors):
-def test_finished_fit_with_time_limit(tmp_path, run_rank_monitors):
-def test_timeouts_updated_when_graceful_stop(tmp_path, run_rank_monitors):
-def test_timeouts_updated_when_exc(tmp_path, run_rank_monitors):
-def test_timeouts_updated_when_sys_exit(tmp_path, run_rank_monitors):
-def test_simulated_fault(tmp_path):
-def _get_ft_test_config_no_step_section():
-def _get_ft_test_config_unknown_sections():
-def test_invalid_config(tmp_path, run_rank_monitors):
-def test_workload_ctrl_messages(tmp_path, run_rank_monitors, ipc_connector):
-
-third_party/nvidia-resiliency-ext/tests/checkpointing/unit/__init__.py
-def empty_dir(path: Path):
-
-third_party/nvidia-resiliency-ext/tests/fault_tolerance/unit/_launcher_test_util.py
-def test_rank_not_send_initial_hb(args):
-def test_rank_failed(args):
-def test_ranks_exit_gracefully(args):
-def test_with_sigterm(args):
-def test_dump_ft_config(args):
-def _get_restart_cnt(tmp_dir, update=False):
-
-third_party/nvidia-resiliency-ext/tests/inprocess/common.py
-def silence_deprecation_warnings():
-def torch_older_than(version):
-def find_free_port():
-def apply_all_tests(decorator):
-def retry(max_attempts=5, delay=1):
-def is_port_available(port, host='localhost'):
-def wait_for_port(port, host='localhost', timeout=5, check_interval=0.1):
-def wrap_store(store, *args):
-def unroll_generators(params):
-def subtests(params):
-def instantiate_parametrized_tests(generic_cls):
-def compose_parametrize_fns(old_parametrize_fn, new_parametrize_fn):
-def dtype_name(dtype):
-
-third_party/nvidia-resiliency-ext/tests/straggler/unit/test_name_mapper.py
-def _get_summary(timings):
-def test_name_mapper_gather():
-def test_name_mapper_no_gather():
-def _test_mapping_consitiency_no_gather_on_rank0(ret_queue):
-def test_mapping_consitiency_no_gather_on_rank0():
-def _test_mapping_consitiency_with_gather_on_rank0(ret_queue):
-def test_mapping_consitiency_with_gather_on_rank0():
-
-third_party/nvidia-resiliency-ext/tests/straggler/unit/test_data_shared.py
-def _get_summary(timings):
-def _test_num_of_all_gather_object_calls(*args, **kwargs):
-def test_all_gather_object_calls_num():
-
-third_party/nvidia-resiliency-ext/tests/fault_tolerance/unit/test_init.py
-def _get_ft_test_config():
-def _install_signal_handler():
-def _set_rmon_socket_env_var_for_this_rank():
-def _run_rank_monitors_fixture():
-def _rank_main_all_ranks_initialized(*args, **kwargs):
-def _rank_main_no_initial_heartbeat_from_rank_0(*args, **kwargs):
-def _rank_main_no_initial_heartbeats(*args, **kwargs):
-def test_init(rank_main, is_chkpt_expected, expected_ret_codes):
-
-third_party/nvidia-resiliency-ext/tests/fault_tolerance/unit/test_config.py
-def test_from_kwargs():
-def test_from_args():
-def test_signal_field_with_valid_values():
-def test_signal_field_with_invalid_values():
-def test_log_level_field_with_valid_values(level_to_set, expected_level):
-def test_log_level_field_with_invalid_values():
-def tmp_yaml_file(lines):
-def test_read_from_yaml():
-def test_read_from_yaml_nested():
-def test_fails_when_missing_ft_section():
-def test_fails_when_ft_section_has_invald_items():
-def test_to_yaml_file():
-
-third_party/nvidia-resiliency-ext/tests/straggler/unit/test_wrap_callables.py
-def _rank_main(*args, test_scenario, ret_queue, **kwargs):
-def test_straggler_sections_detected(test_scenario):
-
-third_party/nvidia-resiliency-ext/tests/checkpointing/unit/conftest.py
-def tmp_path_dist_ckpt(tmp_path_factory) -> Path:
-    """Common directory for saving the checkpoint.
-    Can't use pytest `tmp_path_factory` directly because directory must be shared between processes.
-    """
-    tmp_dir = tmp_path_factory.mktemp('ignored', numbered=False)
-    tmp_dir = tmp_dir.parent.parent / 'tmp_dist_ckpt'
-    if Utils.rank == 0:
-        with TempNamedDir(tmp_dir, sync=False):
-def async_queue():
-
-third_party/nvidia-resiliency-ext/tests/fault_tolerance/unit/test_barrier_rendezvous.py
-def _test_segment_check_interval(seconds=TEST_SEGMENT_CHECK_INTERVAL_SECS):
-def _assert_threads_finished(test_case, threads, timeout_secs):
-
-third_party/nvidia-resiliency-ext/tests/inprocess/test_timeout.py
-def kwargs():
-
-third_party/nvidia-resiliency-ext/tests/ptl_resiliency/func/nemo20/test_local_ckpt_llama3.py
-def get_trainer(args, callbacks, async_save=True):
-def print_rank0(msg):
-def get_parser():
-def main():
-
-third_party/nvidia-resiliency-ext/tests/straggler/unit/test_cupti_manager.py
-def test_cupti_manager_start_stop():
-def test_cupti_manager_captures_all_started_kernels():
-
-third_party/nvidia-resiliency-ext/tests/fault_tolerance/unit/test_timeouts_calc.py
-def tmp_dir():
-def test_with_heartbeats():
-def test_with_custom_sections():
-def test_with_sections_subset():
-def test_section_timeouts_merging():
-def test_get_merged_section_timeouts():
-def test_end_all_sections():
-def _rank_main(*args, tmp_dir, **kwargs):
-def test_distributed(tmp_dir):
-
-third_party/nvidia-resiliency-ext/tests/fault_tolerance/unit/test_timeouts_sections.py
-def _install_signal_handler():
-def tmp_dir():
-def _set_rmon_socket_env_var_for_this_rank():
-def rank_monitors_running(ft_cfg, mp_ctx):
-def _rank_main_1st_run(*args, tmp_dir, **kwargs):
-def _rank_main_2nd_run(*args, tmp_dir, **kwargs):
-def test_timeouts(tmp_dir):
-
-third_party/nvidia-resiliency-ext/tests/fault_tolerance/unit/test_launcher.py
-def tmp_dir():
-def _get_func_name():
-def _run_launcher(cmd_to_run, timeout):
-def _save_ft_cfg(cfg, dirpath):
-def _get_util_script_path():
-def test_rank_not_send_initial_hb(tmp_dir):
-def test_rank_failed(tmp_dir):
-def test_ranks_exit_gracefully(tmp_dir):
-def test_launcher_sigterm_graceful_exit(tmp_dir):
-def test_launcher_sigterm_ignored(tmp_dir):
-def test_ranks_restart(tmp_dir):
-def test_missing_cfg(tmp_dir):
-def test_config_provided_via_cli(tmp_dir):
-def test_config_provided_via_cli_overwrites_yaml(tmp_dir):
-
-third_party/nvidia-resiliency-ext/tests/straggler/unit/test_relative_gpu_scores.py
-def _get_summary(timings):
-def test_relative_gpu_scores_one_rank():
-def _rank_main_gpu_relative_test(*args, gather_on_rank0, ret_queue, **kwargs):
-def test_relative_gpu_scores_gather_on_rank0():
-def test_relative_gpu_scores_no_gather():
-def _rank_main_gpu_relative_test_some_common_kernels(*args, gather_on_rank0, ret_queue, **kwargs):
-def test_relative_gpu_scores_some_common_kernels():
-def _rank_main_gpu_relative_test_no_common_kernels_in_rank(
-    *args,
-    ranks_with_unique_kernels=(),
-    ranks_without_kernels=(),
-    gather_on_rank0=True,
-    ret_queue,
-    **kwargs,
-):
-def test_relative_gpu_scores_ranks_with_unique_kernels():
-def test_relative_gpu_scores_ranks_without_kernels():
-
-third_party/nvidia-resiliency-ext/tests/fault_tolerance/unit/test_dynamic_rendezvous.py
-def _extract_rendezvous_info(rendezvous_result) -> Tuple[int, int]:
-    """Extract rank and world_size from either RendezvousInfo or tuple.
-    Args:
-        rendezvous_result: Either a RendezvousInfo object or a tuple (store, rank, world_size)
-    Returns:
-        Tuple of (rank, world_size)
-    """
-    try:
-        # Try to access as RendezvousInfo object
-        return rendezvous_result.rank, rendezvous_result.world_size
-    except AttributeError:
-        # Fall back to tuple format (store, rank, world_size)
-        return rendezvous_result[1], rendezvous_result[2]
-def _extract_store(rendezvous_result) -> Store:
-    """Extract store from either RendezvousInfo or tuple.
-    Args:
-        rendezvous_result: Either a RendezvousInfo object or a tuple (store, rank, world_size)
-    Returns:
-        Store object
-    """
-    try:
-        # Try to access as RendezvousInfo object
-        return rendezvous_result.store
-    except AttributeError:
-        # Fall back to tuple format (store, rank, world_size)
-        return rendezvous_result[0]
-class CustomAssertMixin:
-    assertDictEqual: Callable
-    def assert_state_equal(self, actual: _RendezvousState, expected: _RendezvousState) -> None:
-        self.assertDictEqual(vars(actual), vars(expected))
-    def assert_state_empty(self, actual: _RendezvousState) -> None:
-        self.assertDictEqual(vars(actual), vars(_RendezvousState()))
-# Basic classes like RendezvousTimeout, NodeDesc, NodeDescGenerator are unchanged from upstream PyTorch
-# and are well-tested there. We focus on FT-specific functionality.
-class AssignRanksTest(TestCase):
-def _ignore_exception(exception_type: Exception, fn: Callable):
-def _wait_for(condition, timeout=30, interval=1, name=None):
-
-third_party/nvidia-resiliency-ext/tests/ptl_resiliency/func/nemo20/check_straggler_log.py
-def cmd_check_status(log_file_lines, args):
-def cmd_num_reports(log_file_lines, args):
-def _check_gpu_stragglers(log_file_lines, pattern, expected_stragglers):
-def cmd_relative_gpu_stragglers(log_file_lines, args):
-def cmd_individual_gpu_stragglers(log_file_lines, args):
-def cmd_check_terminating(log_file_lines, args):
-def read_log_file(log_file):
-def main():
-
-third_party/nvidia-resiliency-ext/tests/fault_tolerance/unit/test_reconnect.py
-def _get_ft_test_config():
-def _set_rmon_socket_env_var_for_this_rank():
-def rank_monitors_fixture():
-def _rank_main(*args, rank_ready_events, **kwargs):
-def _send_sig(sig, pids):
-def test_reconnect(rank_monitors_fixture):
-
-third_party/nvidia-resiliency-ext/tests/straggler/unit/test_det_section_api.py
-def _straggler_init_shutdown():
-def _straggler_shutdown_at_exit():
-def test_fail_if_not_initialized():
-def test_unique_name_is_enforced(_straggler_init_shutdown):
-def test_default_names_are_unique(_straggler_init_shutdown):
-def test_with_block_location_is_used(_straggler_init_shutdown):
-def test_periodic_capture(_straggler_shutdown_at_exit):
-def test_cuda_profiling_disabled(_straggler_shutdown_at_exit):
-def test_can_handle_empty_elapseds(_straggler_init_shutdown):
-
-third_party/nvidia-resiliency-ext/tests/checkpointing/unit/test_async_writer.py
-def mock_open(
-    self,
-    path: str,
-    mode: str = "rb",
-) -> IO[Any]:
-    """Function matching the system open() signature that always raises an error."""
-    raise OSError('worker critical failure during open()')
-class TestAsyncSave:
-    def get_async_save_request(self, writer, save_state_dict_ret) -> AsyncRequest:
-        """Creates an async save request with a finalization step."""
-        save_fn, preload_fn, save_args = writer.get_save_function_and_args()
-        def finalize_fn():
-
-third_party/nvidia-resiliency-ext/tests/straggler/unit/test_interval_tracker.py
-def test_estimate():
-
-third_party/nvidia-resiliency-ext/tests/fault_tolerance/unit/test_shutdown_sections.py
-def _get_ft_test_config():
-def _set_rmon_socket_env_var_for_this_rank():
-def _run_rank_monitors_fixture():
-def wait_for_process(pid, timeout):
-def _send_sig(sig, pids):
-def _rank_main_with_step(*args, rank_ready_events, **kwargs):
-def test_shutdown_due_to_step_section_timeout():
-
-third_party/nvidia-resiliency-ext/tests/fault_tolerance/unit/test_shutdown.py
-def _get_ft_test_config():
-def _set_rmon_socket_env_var_for_this_rank():
-def _run_rank_monitors_fixture():
-def _rank_main(*args, rank_ready_events, **kwargs):
-def wait_for_process(pid, timeout):
-def _send_sig(sig, pids):
-def test_shutdown(test_scenario):
-def _rank_main_explicit_shutdown(*args, rank_ready_events, **kwargs):
-def test_explicit_shutdown():
-
-third_party/nvidia-resiliency-ext/tests/ptl_resiliency/func/nemo20/ft_test_llama3.py
-def get_ft_callback(args):
-def get_trainer(args, callbacks):
-def print_rank0(msg):
-def get_parser():
-def main():
-
-third_party/nvidia-resiliency-ext/tests/fault_tolerance/unit/test_ipc_connector.py
-def _sender_process(rank):
-def test_ipc_connector_send_receive():
-
-third_party/nvidia-resiliency-ext/tests/fault_tolerance/unit/utils.py
-def assert_fn(arg):
-def is_port_open(host, port):
-def find_free_port(host="127.0.0.1"):
-def setup_distributed_worker_tcp_store(
-    rank,
-    world_size,
-    queue,
-    barrier,
-    backend,
-):
-def setup_distributed_worker_file_store(
-    rank,
-    world_size,
-    queue,
-    barrier,
-    backend,
-):
-def distributed_worker(
-    rank,
-    world_size,
-    dist_store_type,
-    queue,
-    barrier,
-    ready_flag,
-    worker_fn,
-    backend,
-    **kwargs,
-):
-def multiprocessing_execute_start(
-    worker_fn,
-    mp_ctx,
-    world_size=2,
-    dist_store_type="file",
-    backend="nccl",
-    **kwargs,
-):
-def multiprocessing_execute_join(processes, timeout):
-
-third_party/nvidia-resiliency-ext/tests/straggler/unit/test_reporting_elapsed.py
-def parse_args():
-def setup_distributed():
-def skip_if_condition(test_scenario):
-def test_report_elapsed_wrap_callables(test_scenario):
-def test_report_elapsed_det_section(test_scenario):
-def test_report_min_interval_is_profiling_interval():
-
-third_party/nvidia-resiliency-ext/tests/straggler/func/ddp_test.py
-def parse_args():
-def round_float_values(d: Dict) -> Dict:
-    return {k: round(v, 2) for k, v in d.items()}
-def print_gpu_scores(report, rank):
-def print_section_scores(report, rank):
-def print_stragglers(stragglers):
-def _all_reduce_bool_flag(flag):
-def print_rank0(msg):
-def main():
-
-third_party/nvidia-resiliency-ext/tests/straggler/unit/test_cupti_ext.py
-def test_basic_kernel_tracking():
-def test_tracking_start_stop():
-def test_reset():
-def test_max_stats_per_kernel():
-def test_profiler_is_singleton():
-def test_with_cuda_graph():
-
 third_party/nvidia-resiliency-ext/tests/straggler/unit/_utils.py
 def assert_fn(arg):
 def is_port_open(host, port):
@@ -1582,51 +1484,56 @@ def multiprocessing_execute_start(
 ):
 def multiprocessing_execute_join(processes, timeout):
 
-third_party/nvidia-resiliency-ext/tests/straggler/unit/test_individual_gpu_scores.py
-def _get_summary(timings):
-def test_individual_gpu_scores_one_rank():
-def _rank_main_gpu_indiv_test(*args, gather_on_rank0, ret_queue, **kwargs):
-def test_individual_gpu_scores_gather_on_rank0():
-def test_individual_gpu_scores_no_gather():
+third_party/nvidia-resiliency-ext/tests/fault_tolerance/unit/test_process_utils.py
+def _sleeping_process(time_to_sleep):
+def test_is_process_alive():
+def test_wait_until_process_terminated():
 
-third_party/nvidia-resiliency-ext/tests/ptl_resiliency/func/nemo20/straggler_test_llama3.py
-def straggler_det_callback(
-    report_time_interval=20, stop_if_detected=False
-) -> run.Config[StragglerDetectionCallback]:
-    return run.Config(
-        StragglerDetectionCallback,
-        report_time_interval=report_time_interval,
-        calc_relative_gpu_perf=True,
-        calc_individual_gpu_perf=True,
-        num_gpu_perf_scores_to_print=5,
-        gpu_relative_perf_threshold=0.7,
-        gpu_individual_perf_threshold=0.7,
-        stop_if_detected=stop_if_detected,
-        enable_ptl_logging=True,
-    )
-def step_timing_callback() -> run.Config[TimingCallback]:
-    return run.Config(TimingCallback)
-def local_executor(
-    nodes=1, devices=8, ft=False, retries=0, container_image="", time=""
-) -> run.LocalExecutor:
-    env_vars = {
-        "TORCH_NCCL_AVOID_RECORD_STREAMS": "1",
-        "NCCL_NVLS_ENABLE": "0",
-        "NVTE_DP_AMAX_REDUCE_INTERVAL": "0",
-        "NVTE_ASYNC_AMAX_REDUCTION": "1",
-    }
-    executor = run.LocalExecutor(ntasks_per_node=devices, launcher="torchrun", env_vars=env_vars)
-    return executor
-def print_rank0(msg):
-def get_parser():
-def main():
+third_party/nvidia-resiliency-ext/tests/fault_tolerance/func/_workload_ctrl_test_worker.py
+def _sigusr1_handler(*args, **kwargs):
+def _sigusr2_handler(*args, **kwargs):
+def _sigterm_handler(*args, **kwargs):
+def get_cmd_file_content(ctl_file):
+def get_random_rank(this_rank, is_agent_rdzv_host):
+def maybe_handle_control_cmd(this_rank, ctl_file, is_agent_rdzv_host):
+def update_run_cnt(run_cnt_file):
+def parse_arguments():
 
-third_party/nvidia-resiliency-ext/tests/straggler/unit/test_reporting.py
-def parse_args():
-def setup_distributed():
-def skip_if_condition(test_scenario):
-def test_reporting_options(test_scenario, monkeypatch):
-def test_no_gather_called(monkeypatch):
+third_party/nvidia-resiliency-ext/src/nvidia_resiliency_ext/fault_tolerance/_ft_rendezvous.py
+def get_method_name(depth=2):
+def _is_final_workers_state(state: WorkerState) -> bool:
+    # Final worker group state once reached will not be changed
+    return state in {WorkerState.SUCCEEDED, WorkerState.FAILED, WorkerState.UNKNOWN}
+def _remove_participant_epilogue(state: _RendezvousState, settings: RendezvousSettings) -> None:
+    if state.complete:
+        # If we do not have any participants left, move to the next round.
+        if not state.participants:
+            msg = "No participants left in the rendezvous, marking rendezvous as incomplete"
+            log.debug(msg)
+            state.complete = False
+            state.round += 1
+    else:
+        if len(state.participants) < settings.min_nodes:
+            msg = (
+                f"Number of participants {len(state.participants)}) less than"
+                f"min_nodes {settings.min_nodes}, clearning deadline in state"
+            )
+            log.debug(msg)
+            state.deadline = None
+class _RendezvousStateHolder(ABC):
+def _should_keep_alive(ctx: _RendezvousContext) -> bool:
+    """Determine whether a keep-alive heartbeat should be sent."""
+    try:
+        last_heartbeat = ctx.state.last_heartbeats[ctx.node]
+    except KeyError:
+        return False
+    return last_heartbeat <= datetime.utcnow() - ctx.settings.keep_alive_interval
+class _SetWorkersStateOp:
+    def __init__(self, target_state: WorkerState):
+
+third_party/nvidia-resiliency-ext/tests/fault_tolerance/unit/test_barrier_rendezvous.py
+def _test_segment_check_interval(seconds=TEST_SEGMENT_CHECK_INTERVAL_SECS):
+def _assert_threads_finished(test_case, threads, timeout_secs):
 
 third_party/nvidia-resiliency-ext/tests/straggler/func/check_log.py
 def cmd_num_reports(log_file_lines, args):
@@ -1636,20 +1543,117 @@ def cmd_individual_gpu_stragglers(log_file_lines, args):
 def read_log_file(log_file):
 def main():
 
-third_party/nvidia-resiliency-ext/tests/straggler/unit/test_sections.py
-def _dummy_section_work(section_name, rank, test_scenario, is_slow_iter=False):
-def _rank_main(*args, test_scenario, ret_queue, **kwargs):
-def test_straggler_sections_detected(test_scenario):
+third_party/nvidia-resiliency-ext/src/nvidia_resiliency_ext/fault_tolerance/dict_utils.py
+def extract_matching_values(
+    x: Union[dict, list],
+    predicate: Callable[[Any], bool],
+    return_lists_as_dicts: bool = False,
+) -> Tuple[Union[dict, list], Union[dict, list]]:
+    """Return matching and nonmatching values. Keeps hierarchy.
+    Args:
+        x (Union[dict, list]) :
+def diff(x1: Any, x2: Any, prefix: Tuple = ()) -> Tuple[list, list, list]:
+    """Recursive diff of dicts.
+    Args:
+        x1 (object):
+def inspect_types(x: Any, prefix: Tuple = (), indent: int = 4):
+def nested_values(x: Union[dict, list]):
+def nested_items_iter(x: Union[dict, list]):
+def dict_map(f: Callable, d: dict):
+def dict_map_with_key(f: Callable, d: dict):
+def dict_list_map_inplace(f: Callable, x: Union[dict, list]):
+def dict_list_map_outplace(f: Callable, x: Union[dict, list]):
+def merge(x1: dict, x2: dict, key: Tuple[str, ...] = ()):
+def map_reduce(
+    xs: Iterable,
+    key_fn: Callable = lambda x: x,
+    value_fn: Callable = lambda x: x,
+    reduce_fn: Callable = lambda x: x,
+) -> dict:
+    """Simple map-reduce implementation following `more_itertools.map_reduce` interface."""
+    res = defaultdict(list)
+    for x in xs:
+        res[key_fn(x)].append(value_fn(x))
+    for k in res:
+        res[k] = reduce_fn(res[k])
+    return dict(res)
+def merge_state_dicts_(current, incoming) -> None:
+    # Recursively add new keys to `current`
+    # Keys that already exists in the `current` will be overwritten
+    for key, value in incoming.items():
+def merge_namespaces_(ns1, ns2) -> None:
+    """Merge attributes of ns2 into ns1."""
+    for key, value in vars(ns2).items():
+def compare_namespaces(ns1, ns2):
+def merge_namespace_changes(original_ns, changes):
+def compare_state_dicts_and_get_new_values(curr_state, new_state):
 
-third_party/nvidia-resiliency-ext/tests/fault_tolerance/unit/test_timeouts.py
-def _install_signal_handler():
-def tmp_dir():
-def _set_rmon_socket_env_var_for_this_rank():
-def rank_monitors_running(ft_cfg, mp_ctx):
-def _rank_main_1st_run(*args, tmp_dir, **kwargs):
-def _rank_main_2nd_run(*args, tmp_dir, **kwargs):
-def _rank_main_3nd_run(*args, tmp_dir, **kwargs):
-def test_timeouts(tmp_dir):
+third_party/nvidia-resiliency-ext/src/nvidia_resiliency_ext/fault_tolerance/c10d_monkey_patch.py
+def _patched_create_tcp_store(params: "RendezvousParameters") -> "TCPStore":  # noqa: F821
+    """
+    Patched version of _create_tcp_store that supports use_libuv parameter.
+    This function is identical to the original _create_tcp_store except it
+    extracts and uses the use_libuv parameter from RendezvousParameters.
+    """
+    import os
+    from datetime import timedelta
+    from typing import cast
+    from torch.distributed import TCPStore
+    from torch.distributed.elastic.events import NodeState, construct_and_record_rdzv_event
+    from torch.distributed.elastic.rendezvous.api import RendezvousConnectionError
+    from torch.distributed.elastic.rendezvous.c10d_rendezvous_backend import (
+        _matches_machine_hostname,
+        parse_rendezvous_endpoint,
+    )
+    # Default port for TCP store (29400) - defined locally for PyTorch 2.3.1 compatibility
+    DEFAULT_PORT = 29400
+    host, port = parse_rendezvous_endpoint(params.endpoint, default_port=DEFAULT_PORT)
+    cfg_is_host = params.get_as_bool("is_host")
+    # If the user has explicitly specified whether our process should host the
+    # the store, respect it.
+    if cfg_is_host is not None:
+        is_host = cfg_is_host
+    # Otherwise try to determine whether we are the host based on our hostname
+    # and IP address.
+    else:
+        is_host = _matches_machine_hostname(host)
+    # The timeout
+    read_timeout = cast(int, params.get_as_int("read_timeout", 60))
+    if read_timeout <= 0:
+        raise ValueError("The read timeout must be a positive integer.")
+    # The use_libuv parameter - NEW FUNCTIONALITY
+    use_libuv = params.get_as_bool("use_libuv", True)
+    # In specific cases we attempt to instantiate the store twice. For details
+    # see the explanation in the except clause below.
+    for is_server in [is_host, False]:
+        try:
+            store = TCPStore(
+                host,
+                port,
+                is_master=is_server,
+                multi_tenant=True,
+                timeout=timedelta(seconds=read_timeout),
+                use_libuv=use_libuv,  # NEW PARAMETER
+            )
+            if is_server:
+                msg = f"Process {os.getpid()} hosts the TCP store for the C10d rendezvous backend."
+                construct_and_record_rdzv_event(
+                    run_id=params.run_id, message=msg, node_state=NodeState.INIT
+                )
+                logger.info(msg)
+            break
+        except (ValueError, RuntimeError, TimeoutError) as exc:
+            # If we heuristically inferred the value of is_host as True and our
+            # first attempt to instantiate the TCP store has failed, try it one
+            # more time with is_host set to False. As an edge case there can be
+            # more than one process that is part of the same rendezvous on this
+            # machine and only one of them will eventually host the store.
+            if not is_server or cfg_is_host is not None:
+                raise RendezvousConnectionError(
+                    "The connection to the C10d store has failed. See inner exception for details."
+                ) from exc
+    return store  # type: ignore[possibly-undefined]
+def apply_c10d_patch():
 
 third_party/nvidia-resiliency-ext/src/nvidia_resiliency_ext/fault_tolerance/launcher.py
 def init_node_health_check(endpoint: Optional[str]) -> None:
