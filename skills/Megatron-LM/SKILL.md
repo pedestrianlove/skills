@@ -2,9 +2,22 @@
 name: Megatron-LM
 description: Skills for agents to consume for Megatron-LM
 ---
-third_party/Megatron-LM/megatron/core/full_cuda_graph.py
-def copy_tensors_in_struct(src):
-def clone_tensors_in_struct(tgt, src):
+third_party/Megatron-LM/megatron/core/_rank_utils.py
+def safe_get_rank() -> int:
+    """Safely get the rank of the current process.
+    Returns the rank from torch.distributed if initialized, otherwise falls back
+    to the RANK environment variable, defaulting to 0.
+    Returns:
+        int: The rank of the current process.
+    """
+    if torch.distributed.is_initialized():
+
+third_party/Megatron-LM/megatron/core/config.py
+def set_experimental_flag(flag: bool):
+def is_experimental_enabled():
+
+third_party/Megatron-LM/megatron/core/safe_globals.py
+def register_safe_globals():
 
 third_party/Megatron-LM/megatron/core/config_logger.py
 def get_config_logger_path(config):
@@ -12,6 +25,51 @@ def has_config_logger_enabled(config):
 def get_path_count(path):
 def get_path_with_count(path):
 def log_config_to_disk(config, dict_data, prefix='', rank_str=''):
+
+third_party/Megatron-LM/megatron/core/optimizer/cpu_offloading/hybrid_optimizer.py
+def _param_generator(cpu_optimizer):
+
+third_party/Megatron-LM/megatron/core/fp4_utils.py
+def is_nvfp4tensor(tensor: torch.Tensor) -> bool:
+    """Check if a tensor is a Transformer Engine NVFP4Tensor."""
+    return HAVE_TE_FP4_TENSOR_CLASS and isinstance(tensor, FP4_TENSOR_CLASS)
+def get_fp4_align_size(fp4_recipe: Fp4Recipe) -> int:
+    """
+    Get the alignment size required for FP4 GEMM.
+    FP4 GEMM requires Blackwell and later architectures.
+    The value 32 is a hardware requirement: TMA (Tensor Memory Accelerator) requires
+    a 16-byte aligned address for efficient memory access. Since FP4 uses 4 bits per value,
+    16 bytes (128 bits) corresponds to 32 FP4 values. Therefore, the alignment size for FP4
+    is 32. With this alignment, NVFP4 GEMM can be performed efficiently.
+    Note that since we are also random hadamard transform for NVFP4 training, we want
+    fused group nvfp4 quantize plus hadamard transform. Hadamard transform will leverage
+    tensor core instructions for better performance, while group quantize kernels also
+    prefer a more aligned size in token dimension M. The efficiently leverage grouped
+    kernels, padding needs to be 64 multiple, but 128 multiple will bring even faster.
+    When it comes to MOE cuda graph support, the number of tokens for each expert should
+    be a buffer on device memory, which means that we don't know the token dimension for
+    each expertin host, therefore we cannot calculate the zero padded scaling factors shape
+    on host to comply with the NVFP4 GEMM scaling factor layout. However, if we have already
+    zero padded the tokens to 128 multiple, then there is no need for such padding, so that
+    host doesn't need to copy the token distribution from device to host (which will break
+    the CUDA graph).
+    Paper link: https://arxiv.org/pdf/2509.25149
+    Scaling factor layout: https://docs.nvidia.com/cuda/cublas/#d-block-scaling-factors-layout
+    TE NVFP4 Grouped Quantization: https://github.com/NVIDIA/TransformerEngine/pull/2411
+    """
+    # pylint: disable=unused-argument
+    return 128
+def dequantize_fp4_tensor(fp4_tensor: torch.Tensor) -> torch.Tensor:
+    """Dequantize a fp4 tensor to a higher precision tensor."""
+    if is_te_min_version("2.7.0.dev0"):
+
+third_party/Megatron-LM/megatron/core/post_training/modelopt/gpt/state_dict_hooks.py
+def mcore_gpt_load_te_state_dict_pre_hook(
+    state_dict, prefix, local_metadata, strict, missing_keys, unexpected_keys, error_msgs
+):
+
+third_party/Megatron-LM/megatron/core/tensor_parallel/inference_layers.py
+def _te_rms_norm_kernel(x: torch.Tensor, weight: torch.Tensor, eps: float):
 
 third_party/Megatron-LM/megatron/core/inference/contexts/fused_kv_append_kernel.py
 def _append_kv_cache_kernel(
@@ -54,8 +112,241 @@ def triton_append_key_value_cache(
     Args:
         layer_number (int):
 
-third_party/Megatron-LM/megatron/core/tensor_parallel/inference_layers.py
-def _te_rms_norm_kernel(x: torch.Tensor, weight: torch.Tensor, eps: float):
+third_party/Megatron-LM/megatron/core/post_training/modelopt/gpt/model_specs.py
+def get_gpt_modelopt_spec(
+    config: TransformerConfig,
+    local_core_attention: bool = False,
+    remap_te_layernorm: bool = False,
+    real_quant_cfg: str = "None",
+    qk_l2_norm: bool = False,
+    use_arbitrary_attention_mask: bool = False,
+):
+
+third_party/Megatron-LM/megatron/core/full_cuda_graph.py
+def copy_tensors_in_struct(src):
+def clone_tensors_in_struct(tgt, src):
+
+third_party/Megatron-LM/megatron/core/num_microbatches_calculator.py
+def get_num_microbatches() -> int:
+    """Get number of microbatches."""
+    return _GLOBAL_NUM_MICROBATCHES_CALCULATOR.get()
+def get_current_global_batch_size() -> int:
+    """Get current global batch size."""
+    return _GLOBAL_NUM_MICROBATCHES_CALCULATOR.get_current_global_batch_size()
+def get_micro_batch_size() -> int:
+    """Get micro batch size."""
+    return _GLOBAL_NUM_MICROBATCHES_CALCULATOR.get_micro_batch_size()
+def get_current_running_global_batch_size() -> int:
+    """Get current running global batch size, taking into account number of DP replicas might be
+    incompatible with true global batch size if `decrease_batch_size_if_needed` is True."""
+    return _GLOBAL_NUM_MICROBATCHES_CALCULATOR.get_current_running_global_batch_size()
+def update_num_microbatches(
+    consumed_samples: int, consistency_check: bool = True, verbose: bool = False
+) -> None:
+    """Update number of microbatches.
+    Args:
+        consumed_samples (int):
+def unset_num_microbatches_calculator():
+def init_num_microbatches_calculator(
+    rank: int,
+    rampup_batch_size: Optional[List[int]],
+    global_batch_size: int,
+    micro_batch_size: int,
+    data_parallel_size: int,
+    decrease_batch_size_if_needed: bool = False,
+) -> None:
+    """Initialize number of microbatches calculator. Supporting backward compatibility.
+    Args:
+        rank (int):
+def destroy_num_microbatches_calculator():
+def reconfigure_num_microbatches_calculator(
+    rank: int,
+    rampup_batch_size: Optional[List[int]],
+    global_batch_size: int,
+    micro_batch_size: int,
+    data_parallel_size: int,
+    decrease_batch_size_if_needed: bool = False,
+) -> None:
+    """Reconfigure number of microbatches calculator. Supporting backward compatibility.
+    Args:
+        rank (int):
+def _configure_global_num_microbatches_calculator(
+    rank: int,
+    rampup_batch_size: Optional[List[int]],
+    global_batch_size: int,
+    micro_batch_size: int,
+    data_parallel_size: int,
+    decrease_batch_size_if_needed: bool = False,
+    init: bool = False,
+) -> None:
+    """Configure number of microbatches calculator. Can be used for initialization and
+    reconfiguration.
+    Args:
+        rank (int):
+def _build_num_microbatches_calculator(
+    rank: int,
+    rampup_batch_size: Optional[List[int]],
+    global_batch_size: int,
+    micro_batch_size: int,
+    data_parallel_size: int,
+    decrease_batch_size_if_needed: bool,
+) -> Union['ConstantNumMicroBatchesCalculator', 'RampupBatchsizeNumMicroBatchesCalculator']:
+    """Build number of microbatches calculator. Internal helper method.
+    Args:
+        rank (int):
+def _round(batch_size: int, divisor: int) -> int:
+    """Round `batch_size` down to nearest batch size divisible by `divisor`."""
+    return (batch_size // divisor) * divisor
+class NumMicroBatchesCalculator(ABC):
+
+third_party/Megatron-LM/megatron/core/optimizer_param_scheduler.py
+def get_canonical_lr_for_logging(param_groups: list[dict]) -> float | None:
+    """Return the lr of the first ``default_config=True`` param group.
+    All ``default_config`` groups share the same LR schedule, so the first one
+    is representative.  This includes empty rank-alignment stub groups, which
+    the scheduler still writes a valid lr onto.
+    Args:
+        param_groups (list[dict]):
+def param_group_override_to_tuple(
+    param_group_override: ParamGroupOverride | None,
+) -> tuple[tuple[str, Any], ...] | None:
+    """Convert a param group override to a tuple for use as a key in a dictionary.
+    The tuple is sorted by the keys of the param group override to handle different orderings of
+     the keys in different override dictionaries which still mean the same thing.
+    """
+    if param_group_override is None:
+        return None
+    return tuple(sorted(param_group_override.items()))
+def combine_param_group_overrides(
+    param_group_overrides: list[ParamGroupOverride | None],
+) -> ParamGroupOverride:
+    """Combine a list of param group overrides into a single param group override.
+    This function ensures that the overrides are not conflicting as well.
+    Args:
+        param_group_overrides (list[ParamGroupOverride]):
+
+third_party/Megatron-LM/megatron/core/msc_utils.py
+def open_file(*args, **kwargs):
+
+third_party/Megatron-LM/megatron/core/jit.py
+def noop_decorator(func):
+def enable_jit_fuser():
+def disable_jit_fuser():
+
+third_party/Megatron-LM/megatron/core/tensor_parallel/utils.py
+def split_tensor_along_last_dim(
+    tensor: torch.Tensor, num_partitions: int, contiguous_split_chunks: bool = False
+) -> List[torch.Tensor]:
+    """Split a tensor along its last dimension.
+    Args:
+        tensor: input tensor.
+        num_partitions: number of partitions to split the tensor
+        contiguous_split_chunks: If True, make each chunk contiguous
+                                 in memory.
+    Returns:
+        A list of Tensors
+    """
+    # Get the size and dimension.
+    last_dim = tensor.dim() - 1
+    last_dim_size = divide(tensor.size()[last_dim], num_partitions)
+    # Split.
+    tensor_list = torch.split(tensor, last_dim_size, dim=last_dim)
+    # Note: torch.split does not create contiguous tensors by default.
+    if contiguous_split_chunks:
+        return tuple(chunk.contiguous() for chunk in tensor_list)
+    return tensor_list
+def split_tensor_into_1d_equal_chunks(tensor, new_buffer=False, tp_group=None):
+def gather_split_1d_tensor(tensor, tp_group=None):
+
+third_party/Megatron-LM/megatron/core/inference/contexts/dynamic_context.py
+def get_mem_size_str(n_bytes: int) -> str:
+    """Convert number of bytes to human-readable string."""
+    for exp, suffix in ((4, "TB"), (3, "GB"), (2, "MB"), (3, "KB"), (0, "bytes")):
+
+third_party/Megatron-LM/megatron/core/optimizer/__init__.py
+def get_standard_config_overrides(config: OptimizerConfig) -> Dict[ParamKey, ParamGroupOverride]:
+    """Get standard config overrides for the optimizer, handling decoupled LR and common wd skips.
+    Args:
+        config (OptimizerConfig):
+def _get_param_groups(
+    model_chunks: List[MegatronModule],
+    config: OptimizerConfig,
+    config_overrides: Optional[Dict[ParamKey, ParamGroupOverride]],
+) -> List[Dict]:
+    """Create parameter groups for optimizer.
+    Creates parameter groups from provided optimizer config object.
+    NOTE There can be more than one match between a ParamKey and a parameter.
+        What we do is merge all of the matching ParamKey overrides into a single ParamGroupOverride
+        for that parameter and use that as the key for that parameter. Any parameters that get
+        the same set of merged overrides will be mapped into the same parameter group.
+    Args:
+        model_chunks (List[MegatronModule]):
+def _get_param_groups_and_buffers(
+    model_chunks: List[MegatronModule],
+    model_chunk_offset: int,
+    config: OptimizerConfig,
+    config_overrides: Optional[Dict[ParamKey, ParamGroupOverride]],
+    filter_fn: Callable,
+    buffer_name: str,
+) -> Tuple[List[Dict], Dict[int, List[_ParamAndGradBuffer]]]:
+    """Returns parameter groups and buffer for optimizer.
+    Args:
+        model_chunks (List[MegatronModule]):
+def _get_megatron_optimizer_based_on_param_groups(
+    config: OptimizerConfig,
+    model_chunks: List[MegatronModule],
+    param_groups: List,
+    per_model_buffers: Optional[Dict[int, List[_ParamAndGradBuffer]]] = None,
+    model_parallel_group: Optional[torch.distributed.ProcessGroup] = None,
+    data_parallel_group: Optional[torch.distributed.ProcessGroup] = None,
+    data_parallel_group_gloo: Optional[torch.distributed.ProcessGroup] = None,
+    data_parallel_group_idx: Optional[int] = None,
+    intra_dist_opt_group: Optional[torch.distributed.ProcessGroup] = None,
+    distributed_optimizer_instance_id: Optional[int] = 0,
+    pg_collection: Optional[ProcessGroupCollection] = None,
+) -> MegatronOptimizer:
+    """Get Megatron optimizer based on parameter groups.
+    Args:
+        config (OptimizerConfig):
+def check_config_overrides_consistency(
+    config: OptimizerConfig, config_overrides: Optional[Dict[ParamKey, ParamGroupOverride]]
+):
+def get_megatron_optimizer(
+    config: OptimizerConfig,
+    model_chunks: List[MegatronModule],
+    config_overrides: Optional[Dict[ParamKey, ParamGroupOverride]] = None,
+    use_gloo_process_groups: bool = True,
+    pg_collection: Optional[ProcessGroupCollection] = None,
+    dump_param_to_param_group_map: Optional[str] = None,
+) -> MegatronOptimizer:
+    """Retrieve the Megatron optimizer for model chunks.
+    We use separate optimizers for expert parameters and non-expert parameters.
+    Args:
+        config (OptimizerConfig):
+
+third_party/Megatron-LM/megatron/core/nccl_allocator.py
+def _build_nccl_allocator():
+def get_func_args(func):
+def create_nccl_mem_pool(symmetric=None):
+def init() -> None:
+    """
+    Initialize the NCCL allocator.
+    PyTorch tracks memory registration at the pool level, not per allocation.
+    If a pool already contains allocations from a previous context, attempting
+    to register it again will re-register all existing allocations and may
+    trigger NCCL errors. To avoid this, the pool is explicitly deregistered
+    on entry and re-registered on exit for each context use.
+    """
+    # Enables NCCL NVLS algorithm
+    os.environ["NCCL_NVLS_ENABLE"] = "1"
+    # Disables the use of the tensor register allocator hook
+    os.environ["TORCH_NCCL_USE_TENSOR_REGISTER_ALLOCATOR_HOOK"] = "0"
+    _build_nccl_allocator()
+    log_single_rank(logger, logging.INFO, "[MCORE][NCCL_ALLOCATOR] Initialized NCCL Allocator")
+# register_mem_pool/deregister_mem_pool are used for manual (de)registration of the memory pool.
+# They are used in the case of FSDP manual registration.
+def register_mem_pool(pool, group, symmetric=True):
+def deregister_mem_pool(pool, group):
 
 third_party/Megatron-LM/megatron/core/fp8_utils.py
 def is_float8tensor(tensor: torch.Tensor) -> bool:
@@ -101,221 +392,686 @@ def correct_amax_history_if_needed(model: List[torch.nn.Module]):
 def post_all_gather_processing(model_params):
 def is_first_last_bf16_layer(config: TransformerConfig, layer_no: int):
 
-third_party/Megatron-LM/megatron/core/tensor_parallel/utils.py
-def split_tensor_along_last_dim(
-    tensor: torch.Tensor, num_partitions: int, contiguous_split_chunks: bool = False
-) -> List[torch.Tensor]:
-    """Split a tensor along its last dimension.
+third_party/Megatron-LM/megatron/core/transformer/multi_token_prediction.py
+def tie_word_embeddings_state_dict(
+    sharded_state_dict: ShardedStateDict,
+    word_emb_weight: Tensor,
+    word_emb_weight_key: str,
+    tp_group: torch.distributed.ProcessGroup,
+    dp_cp_group: torch.distributed.ProcessGroup,
+) -> None:
+    """tie the embedding of the mtp processing stage in a given sharded state dict.
     Args:
-        tensor: input tensor.
-        num_partitions: number of partitions to split the tensor
-        contiguous_split_chunks: If True, make each chunk contiguous
-                                 in memory.
+        sharded_state_dict (ShardedStateDict):
+def tie_output_layer_state_dict(
+    sharded_state_dict: ShardedStateDict,
+    output_layer_weight: Tensor,
+    output_layer_weight_key: str,
+    tp_group: torch.distributed.ProcessGroup,
+    dp_cp_group: torch.distributed.ProcessGroup,
+) -> None:
+    """tie the output layer of the mtp processing stage in a given sharded state dict.
+    Args:
+        sharded_state_dict (ShardedStateDict):
+def roll_tensor(tensor, shifts=-1, dims=-1, cp_group=None, packed_seq_params=None):
+def _roll_tensor_packed_seq(tensor, shifts, dims, packed_seq_params, cp_group=None):
+def get_mtp_layer_spec(
+    mtp_model_layer_spec: ModuleSpec, use_transformer_engine: bool
+) -> ModuleSpec:
+    """Get the MTP layer spec.
     Returns:
-        A list of Tensors
+        ModuleSpec: Module specification with TE modules
     """
-    # Get the size and dimension.
-    last_dim = tensor.dim() - 1
-    last_dim_size = divide(tensor.size()[last_dim], num_partitions)
-    # Split.
-    tensor_list = torch.split(tensor, last_dim_size, dim=last_dim)
-    # Note: torch.split does not create contiguous tensors by default.
-    if contiguous_split_chunks:
-        return tuple(chunk.contiguous() for chunk in tensor_list)
-    return tensor_list
-def split_tensor_into_1d_equal_chunks(tensor, new_buffer=False, tp_group=None):
-def gather_split_1d_tensor(tensor, tp_group=None):
-
-third_party/Megatron-LM/megatron/core/inference/text_generation_server/dynamic_text_gen_server/endpoints/common.py
-def send_do_generate():
-
-third_party/Megatron-LM/megatron/core/inference/unified_memory.py
-def _compile_timeout(timeout_s: int):
-def compile_allocator():
-def create_unified_mempool() -> "MemPool":
-    """Create a unified memory mempool using CUDA managed memory.
+    return get_mtp_layer_spec_for_backend(
+        mtp_model_layer_spec,
+        backend=TESpecProvider() if use_transformer_engine else LocalSpecProvider(),
+    )
+def get_mtp_layer_spec_for_backend(
+    mtp_model_layer_spec: ModuleSpec, backend: BackendSpecProvider
+) -> ModuleSpec:
+    """Get the MTP layer spec.
     Returns:
-        (MemPool) Unified memory mempool.
+        ModuleSpec: Module specification with modules from the backend.
     """
-    # Attempt to compile allocator.
-    compile_allocator()
-    # Return mempool.
-    if _compilation_state != CompilationState.SUCCESS:
-        details = _compilation_error
-        if details is None:
-            details = "Unknown reason (allocator compilation did not succeed)."
-        raise UnifiedMemoryUnsupportedError(
-            "Unified virtual memory (UVM) mempool is unsupported or failed to initialize: "
-            + details
+    column_parallel_linear_impl: type = backend.column_parallel_linear()
+    layer_norm_impl = backend.layer_norm()
+    mtp_layer_spec = ModuleSpec(
+        module=MultiTokenPredictionLayer,
+        submodules=MultiTokenPredictionLayerSubmodules(
+            enorm=layer_norm_impl,
+            hnorm=layer_norm_impl,
+            eh_proj=column_parallel_linear_impl,
+            mtp_model_layer=mtp_model_layer_spec,
+            layer_norm=layer_norm_impl,
+        ),
+    )
+    return mtp_layer_spec
+def mtp_on_this_rank(
+    config: TransformerConfig, ignore_virtual: Optional[bool] = True, vp_stage: Optional[int] = None
+) -> bool:
+    """
+    Check if there is MTP on the current rank.
+    Behavior:
+        - If a custom pipeline model parallel layout is provided in the config:
+            - If virtual pipeline parallelism is enabled (and `ignore_virtual` is False), checks
+              whether any MTP layers are present on this (pp_rank, vp_stage) pair.
+            - Otherwise, checks all virtual pipeline ranks of the current pipeline rank. Returns
+              True if any virtual sub-rank includes at least one MTP layer.
+        - If no custom layout is provided, assumes all MTP layers (if any) are placed on the last
+          pipeline stage. The function returns True only on the last pipeline stage.
+    """
+    mtp_on_this_rank = False
+    pp_rank = parallel_state.get_pipeline_model_parallel_rank()
+    if config.pipeline_model_parallel_layout is not None:
+        # with custom PP layout, we support put MTP layers on any pipeline stage
+        layout = config.pipeline_model_parallel_layout.layout
+        if (
+            not ignore_virtual
+            and parallel_state.get_virtual_pipeline_model_parallel_world_size() is not None
+        ):
+def get_mtp_ranks(pp_ranks: List[int], config: TransformerConfig) -> List[int]:
+    """Get the ranks of the MTP layers."""
+    mtp_ranks = set()
+    if config.mtp_num_layers is None:
+        return []
+    if config.pipeline_model_parallel_layout is None:
+        return [pp_ranks[-1]]
+    layout = config.pipeline_model_parallel_layout.layout
+    for pp_rank in range(len(layout)):
+def get_mtp_layer_offset(config: TransformerConfig, vp_stage: Optional[int] = None) -> int:
+    """Get the offset of the MTP layer."""
+    if config.pipeline_model_parallel_size > 1:
+        if config.pipeline_model_parallel_layout:
+            offset = config.pipeline_model_parallel_layout.get_layer_offset(
+                layer_type=LayerType.mtp, vp_stage=vp_stage
+            )
+        else:
+            offset = 0
+    else:
+        offset = 0
+    return offset
+def get_mtp_num_layers_to_build(
+    config: TransformerConfig, vp_stage: Optional[int] = None, pp_rank: Optional[int] = None
+) -> int:
+    """Get the number of MTP layers to build."""
+    if config.pipeline_model_parallel_layout is not None:
+        # If we have a custom PP layout, get the number of mtp layers in the layout array.
+        num_layers_to_build = config.pipeline_model_parallel_layout.get_num_layers_to_build(
+            layer_type=LayerType.mtp, vp_stage=vp_stage
+        )
+        assert num_layers_to_build == config.mtp_num_layers or num_layers_to_build == 0, (
+            f"Currently, we only support put all of MTP layers on the last pipeline stage, "
+            f"so the number of MTP layers to build ({num_layers_to_build}) must match "
+            f"mtp_num_layers ({config.mtp_num_layers}) or be 0."
         )
     else:
-        return MemPool(allocator=_alloc)
-def _get_ctypes_lib() -> "ctypes.CDLL":
-    """Return a ctypes handle to the compiled UVM extension (.so)."""
-    global _ctypes_lib
-    compile_allocator()
-    if _compilation_state != CompilationState.SUCCESS or _so_path is None:
-        raise UnifiedMemoryUnsupportedError()
-    if _ctypes_lib is not None:
-        return _ctypes_lib
-    with _ctypes_lock:
-        if _ctypes_lib is None:
-            _ctypes_lib = ctypes.CDLL(_so_path)
-            # Configure argtypes/restype for exported helpers.
-            _ctypes_lib.managed_prefetch.argtypes = [
-                ctypes.c_void_p,
-                ctypes.c_size_t,
-                ctypes.c_int,
-                ctypes.c_void_p,
-            ]
-            _ctypes_lib.managed_prefetch.restype = ctypes.c_int
-            _ctypes_lib.managed_advise_preferred_location.argtypes = [
-                ctypes.c_void_p,
-                ctypes.c_size_t,
-                ctypes.c_int,
-            ]
-            _ctypes_lib.managed_advise_preferred_location.restype = ctypes.c_int
-            _ctypes_lib.managed_advise_accessed_by.argtypes = [
-                ctypes.c_void_p,
-                ctypes.c_size_t,
-                ctypes.c_int,
-            ]
-            _ctypes_lib.managed_advise_accessed_by.restype = ctypes.c_int
-    return _ctypes_lib
-def prefetch_managed_tensor(tensor, *, device: int, stream=None) -> None:
-    """Prefetch a CUDA tensor allocated from the UVM mempool to a specific device.
-    This uses `cudaMemPrefetchAsync` to physically migrate the pages backing the tensor.
-    The virtual address (pointer) remains unchanged, making this safe for use with
-    recorded CUDA graphs.
+        if parallel_state.is_pipeline_last_stage(ignore_virtual=False, vp_stage=vp_stage):
+def process_mtp_loss(
+    hidden_states: Tensor,
+    labels: Tensor,
+    loss_mask: Optional[Tensor],
+    output_layer: Callable,
+    output_weight: Optional[Tensor],
+    runtime_gather_output: Optional[bool],
+    is_training: bool,
+    compute_language_model_loss: Callable,
+    config: TransformerConfig,
+    cp_group: Optional[torch.distributed.ProcessGroup] = None,
+    packed_seq_params: Optional[PackedSeqParams] = None,
+) -> Tensor:
+    """Process Multi-Token Prediction (MTP) loss computation.
+    This is a standalone function that handles MTP loss computation. It's used on the
+    post_process rank to split concatenated hidden states and compute MTP losses.
     Args:
-        tensor (torch.Tensor):
-def advise_managed_tensor_preferred_location(tensor, *, device: int) -> None:
-    """Set the preferred physical location hint for a managed tensor.
-    This uses `cudaMemAdviseSetPreferredLocation`. It tells the CUDA driver where the
-    pages should ideally reside. Unlike prefetch, this is a hint and does not
-    immediately trigger migration unless the driver decides it is necessary.
+        hidden_states (Tensor):
+def _get_mtp_block_submodules(
+    config: TransformerConfig, spec: Union[MultiTokenPredictionBlockSubmodules, ModuleSpec]
+) -> MultiTokenPredictionBlockSubmodules:
+    """
+    Retrieve or construct MultiTokenPredictionBlockSubmodules based on the provided specification.
     Args:
-        tensor (torch.Tensor):
-def advise_managed_tensor_accessed_by(tensor, *, device: int) -> None:
-    """Hint that a specific device will access the managed tensor.
-    This uses `cudaMemAdviseSetAccessedBy`. It ensures that the mapping for this
-    memory region is established in the page tables of the specified device,
-    reducing page fault latency when the device first touches the data.
+        config (TransformerConfig):
+
+third_party/Megatron-LM/megatron/core/optimizer/muon.py
+def get_megatron_muon_optimizer(
+    config: OptimizerConfig,
+    model_chunks: List[MegatronModule],
+    config_overrides: Optional[Dict[ParamKey, ParamGroupOverride]] = None,
+    use_gloo_process_groups: bool = True,
+    layer_wise_distributed_optimizer: bool = False,
+    pg_collection: Optional[ProcessGroupCollection] = None,
+) -> MegatronOptimizer:
+    """This function is used to get the muon optimizer for the model chunks.
+    It is used to get the muon optimizer for the model chunks.
     Args:
-        tensor (torch.Tensor):
-def prefetch_managed_module_parameters(
-    module, *, device: int, include_buffers: bool = False
+        config (OptimizerConfig):
+
+third_party/Megatron-LM/megatron/core/fusions/fused_cross_entropy.py
+def calculate_logits_max(vocab_parallel_logits: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
+    """
+    Calculates the maximum logits of the predicted tokens.
+    """
+    vocab_parallel_logits, logits_max = VocabParallelCrossEntropy.calculate_logits_max(
+        vocab_parallel_logits
+    )
+    return vocab_parallel_logits, logits_max
+@jit_fuser
+def calculate_predicted_logits(
+    vocab_parallel_logits: torch.Tensor,
+    target: torch.Tensor,
+    logits_max: torch.Tensor,
+    vocab_start_index: int,
+    vocab_end_index: int,
+) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+    """
+    Calculates the predicted logits for the tokens.
+    """
+    (target_mask, masked_target_1d, predicted_logits, sum_exp_logits, exp_logits) = (
+        VocabParallelCrossEntropy.calculate_predicted_logits(
+            vocab_parallel_logits, target, logits_max, vocab_start_index, vocab_end_index
+        )
+    )
+    predicted_logits_sum_exp_logits = torch.cat((predicted_logits, sum_exp_logits))
+    return target_mask, masked_target_1d, predicted_logits_sum_exp_logits, exp_logits
+@jit_fuser
+def calculate_cross_entropy_loss(
+    exp_logits: torch.Tensor, predicted_logits_sum_exp_logits: torch.Tensor
+) -> Tuple[torch.Tensor, torch.Tensor]:
+    """
+    Calculates the final cross entropy loss for the tokens.
+    """
+    split_val = predicted_logits_sum_exp_logits.size()[0] // 2
+    predicted_logits, sum_exp_logits = torch.split(predicted_logits_sum_exp_logits, split_val)
+    exp_logits, loss = VocabParallelCrossEntropy.calculate_cross_entropy_loss(
+        exp_logits, predicted_logits, sum_exp_logits
+    )
+    return exp_logits, loss
+@jit_fuser
+def calculate_gradients(
+    softmax: torch.Tensor,
+    grad_output: torch.Tensor,
+    target_mask: torch.Tensor,
+    masked_target_1d: torch.Tensor,
+) -> torch.Tensor:
+    """
+    Calculate the logits gradients scaled based on the CE loss
+    """
+    (grad_2d, arange_1d, softmax_update, grad_input) = (
+        VocabParallelCrossEntropy.prepare_gradient_calculation_operands(softmax, target_mask)
+    )
+    grad_input = VocabParallelCrossEntropy.calculate_gradients(
+        grad_2d, arange_1d, masked_target_1d, softmax_update, grad_input, grad_output
+    )
+    grad_input = grad_input.to(torch.bfloat16)
+    return grad_input
+class _VocabParallelCrossEntropy(torch.autograd.Function):
+def fused_vocab_parallel_cross_entropy(vocab_parallel_logits, target, tp_group):
+
+third_party/Megatron-LM/megatron/core/pipeline_parallel/utils.py
+def is_pp_first_stage(pp_group: torch.distributed.ProcessGroup):
+def is_pp_last_stage(pp_group: torch.distributed.ProcessGroup):
+def is_vp_first_stage(vp_stage: int, vp_size: int | None):
+def is_vp_last_stage(vp_stage: int, vp_size: int | None):
+def get_pp_first_rank(pp_group: torch.distributed.ProcessGroup):
+def get_pp_last_rank(pp_group: torch.distributed.ProcessGroup):
+def get_pp_next_rank(pp_group: torch.distributed.ProcessGroup):
+def get_pp_prev_rank(pp_group: torch.distributed.ProcessGroup):
+def make_viewless(e):
+def set_ideal_affinity_for_current_gpu():
+def set_streams(comp_stream=None, comm_stream=None):
+def get_comp_stream():
+def get_comm_stream():
+
+third_party/Megatron-LM/megatron/core/optimizer/qk_clip.py
+def clip_qk(model, log_max_only=False) -> float:
+    """
+    Clip the QK attention logits to the threshold, recommended for Muon optimizer.
+    Args:
+        model: The model to clip the QK attention logits, a list of model chunks.
+        log_only: Whether to only log the max attention logit, without updating the weights.
+    Returns:
+        The maximum attention logit, a float.
+    """
+    with torch.no_grad():
+
+third_party/Megatron-LM/megatron/core/fusions/fused_weighted_squared_relu.py
+def weighted_squared_relu(x: torch.Tensor, weights: torch.Tensor) -> torch.Tensor:
+    """Element-wise weight applied after Squared-ReLU.
+    Args:
+        x (torch.Tensor):
+def _squared_relu_back(g: torch.Tensor, x: torch.Tensor) -> torch.Tensor:
+    """Gradient of Squared-ReLU.
+    The derivative of ``(ReLU(x))^2`` w.r.t ``x`` is ``2 * ReLU(x)``.
+    """
+    return g * 2 * F.relu(x)
+@jit_fuser
+def weighted_squared_relu_back(g: torch.Tensor, x: torch.Tensor, weights: torch.Tensor):
+def weighted_squared_relu_impl(input: torch.Tensor, weights: torch.Tensor) -> torch.Tensor:
+    """Token-wise weighted Squared-ReLU fusion with optional FP8 storage.
+    Args:
+        input (torch.Tensor):
+
+third_party/Megatron-LM/megatron/core/distributed/finalize_model_grads.py
+def _get_main_grad_attr(param: torch.nn.Parameter):
+def _unshard_if_dtensor(tensor: Union[torch.Tensor, "DTensor"]) -> torch.Tensor:
+    """
+    Unshards the input tensor if it is a DTensor and otherwise returns the
+    tensor unmodified.
+    Args:
+        tensor (Union[torch.Tensor, DTensor]):
+def _reshard_if_dtensor(
+    tensor_to_shard: torch.Tensor, reference_tensor: Union[torch.Tensor, "DTensor"]
+) -> Union[torch.Tensor, "DTensor"]:
+    """
+    Reshards the input tensor to match the sharding configuration of the
+    reference tensor if the reference tensor is a DTensor. Otherwise, returns
+    the reference tensor unmodified.
+    Args:
+        tensor_to_shard (torch.Tensor):
+def _allreduce_conditional_embedding_grads(
+    model: List[torch.nn.Module],
+    config: TransformerConfig,
+    pp_group: Optional[torch.distributed.ProcessGroup] = None,
+):
+def _get_shared_word_embedding_weight(
+    model_module: torch.nn.Module, config: TransformerConfig
+) -> Optional[torch.nn.Parameter]:
+    """Return the shared word-embedding weight if it is duplicated across stages.
+    Args:
+        model_module: The model module from which to extract the
+            word-embedding weight.
+        config: Transformer config.
+    Returns:
+        The shared embedding or output weight if available; otherwise ``None``.
+    """
+    # Only reduce if weights are duplicated across stages.
+    if model_module.share_embeddings_and_output_weights or getattr(config, 'mtp_num_layers', 0):
+def _get_position_embedding_weight(model_module: torch.nn.Module) -> torch.nn.Parameter:
+    """Return the position-embedding weight tensor from the given model module.
+    Args:
+        model_module: The model module that owns the
+            position-embedding parameter.
+    Returns:
+        The position-embedding weight tensor.
+    """
+    return getattr(model_module, 'position_embeddings').weight  # type: ignore[attr-defined]
+def _allreduce_word_embedding_grads(
+    model: List[torch.nn.Module],
+    config: TransformerConfig,
+    embd_group: Optional[torch.distributed.ProcessGroup] = None,
+    pp_group: Optional[torch.distributed.ProcessGroup] = None,
+):
+def _allreduce_embedding_grad(
+    model: List[torch.nn.Module],
+    embd_group: torch.distributed.ProcessGroup,
+    pp_group: torch.distributed.ProcessGroup,
+    weight_getter: Callable[[torch.nn.Module], Optional[torch.nn.Parameter]],
+    skip_if_none: bool = True,
+    config: TransformerConfig = None,
+):
+def _allreduce_position_embedding_grads(
+    model: List[torch.nn.Module],
+    config: TransformerConfig,
+    pos_emb_group: torch.distributed.ProcessGroup,
+    pp_group: torch.distributed.ProcessGroup,
+):
+def reset_model_temporary_tensors(config: TransformerConfig, model: List[torch.nn.Module]):
+def _update_router_expert_bias(model: List[torch.nn.Module], config: TransformerConfig):
+def _allreduce_non_tensor_model_parallel_grads(
+    model: List[torch.nn.Module],
+    config: TransformerConfig,
+    tp_group: Optional[torch.distributed.ProcessGroup] = None,
+):
+def finalize_model_grads(
+    model: List[torch.nn.Module],
+    num_tokens: Optional[torch.Tensor] = None,
+    pg_collection: Optional[ProcessGroupCollection] = None,
+    force_all_reduce: Optional[bool] = False,
+):
+
+third_party/Megatron-LM/megatron/core/optimizer/optimizer.py
+def _zero_grad_group_helper(
+    group: List[torch.nn.Parameter], set_to_none: bool, use_decoupled_grad: bool = False
+):
+def _multi_tensor_copy_this_to_that(
+    this: List[torch.Tensor], that: List[torch.Tensor], overflow_buf: Optional[torch.Tensor] = None
+):
+
+third_party/Megatron-LM/megatron/core/fusions/fused_bias_gelu.py
+def bias_gelu(bias, y):
+def bias_gelu_back(g, bias, y):
+
+third_party/Megatron-LM/megatron/core/rerun_state_machine.py
+def initialize_rerun_state_machine(**kwargs) -> None:
+    """Helper function to initialize the rerun machine instance.
+    Check the RerunStateMachine class for the details.
+    """
+    rerun_state_machine: RerunStateMachine = RerunStateMachine(**kwargs)
+    _set_rerun_state_machine(rerun_state_machine)
+def destroy_rerun_state_machine() -> None:
+    """Helper function to shut down the rerun machine instance."""
+    global _GLOBAL_RERUN_STATE_MACHINE
+    _GLOBAL_RERUN_STATE_MACHINE = None
+def get_rerun_state_machine() -> RerunStateMachine:
+    """Helper function to return the singleton instance of the rerun machine."""
+    if _GLOBAL_RERUN_STATE_MACHINE is None:
+        log_single_rank(logger, logging.WARNING, "Implicit initialization of Rerun State Machine!")
+        initialize_rerun_state_machine()
+        assert _GLOBAL_RERUN_STATE_MACHINE is not None
+    return _GLOBAL_RERUN_STATE_MACHINE
+def _set_rerun_state_machine(rerun_state_machine) -> None:
+    """Internal function to set the singleton instance of the rerun machine."""
+    global _GLOBAL_RERUN_STATE_MACHINE
+    assert _GLOBAL_RERUN_STATE_MACHINE is None, "Rerun state machine is already initialized"
+    _GLOBAL_RERUN_STATE_MACHINE = rerun_state_machine
+def _compare_floats(a: torch.Tensor, b: torch.Tensor) -> float:
+    """Internal function that implements the default compare_func.
+    Check the validate_result() method of the RerunStateMachine class for details.
+    """
+    af: float = a.item()
+    bf: float = b.item()
+    if (af == bf) or (math.isnan(af) and math.isnan(bf)):
+
+third_party/Megatron-LM/megatron/core/tensor_parallel/layers.py
+def param_is_not_tensor_parallel_duplicate(param, tp_group=None):
+def set_tensor_model_parallel_attributes(tensor, is_parallel, dim, stride):
+def set_defaults_if_not_set_tensor_model_parallel_attributes(tensor):
+def copy_tensor_model_parallel_attributes(destination_tensor, source_tensor):
+def _initialize_affine_weight_gpu(weight, init_method, partition_dim, stride=1, is_expert=False):
+def _initialize_affine_weight_cpu(
+    weight,
+    output_size,
+    input_size,
+    per_partition_size,
+    partition_dim,
+    init_method,
+    stride=1,
+    return_master_weight=False,
+    *,
+    params_dtype=torch.float32,
+    rank=None,
+    world_size=None,
+    skip_set_tensor_parallel_attributes=False,
+):
+def linear_with_frozen_weight(
+    input: torch.Tensor,
+    weight: torch.Tensor,
+    bias: Optional[torch.Tensor],
+    gradient_accumulation_fusion: bool,
+    allreduce_dgrad: bool,
+    sequence_parallel: bool,
+    tp_group: Optional[torch.distributed.ProcessGroup],
+    grad_output_buffer: Optional[List[torch.Tensor]] = None,
+    wgrad_deferral_limit: None = None,
+    async_grad_allreduce: Optional[bool] = None,
+) -> torch.Tensor:
+    """Linear layer execution with weight.requires_grad == False.
+    This function handles linear layers with weight frozen (untrainable).
+    In the forward, it only saves weight and does not save input activations.
+    In the backward, it does not perform weight gradient calculation, or
+    weight gradient allreduce.
+    Args:
+    input (torch.Tensor required):
+def linear_with_grad_accumulation_and_async_allreduce(
+    input: torch.Tensor,
+    weight: torch.Tensor,
+    bias: Optional[torch.Tensor],
+    gradient_accumulation_fusion: bool,
+    allreduce_dgrad: bool,
+    sequence_parallel: bool,
+    grad_output_buffer: Optional[List[torch.Tensor]] = None,
+    wgrad_deferral_limit: Optional[int] = 0,
+    async_grad_allreduce: Optional[bool] = None,
+    tp_group: Optional[torch.distributed.ProcessGroup] = None,
+) -> torch.Tensor:
+    """Linear layer execution with asynchronous communication and
+    gradient accumulation fusion in backprop.
+    This has the option to accumulate the result of backprop
+    calculation into an existing gradient buffer, preventing the need
+    to do an additional addition kernel after the gradient
+    calculation.
+    Additionally, the tensor parallel all reduce of the input
+    gradients can be done asynchronously with the calculation of
+    the weight gradients.
+    In the case of sequence parallelism, the reduce scatter of the
+    input gradients is done asynchronously with the calculation of the
+    weight gradients.
+    Use of this module requires that the environment variable
+    CUDA_DEVICE_MAX_CONNECTIONS=1. There are a few collective
+    operations, noted in the code, that should be scheduled before
+    compute kernels to overlap the communication with the computation,
+    which is necessary for a speedup but not for correctness so that
+    ordering isn't imposed by the scheduler. Setting
+    CUDA_DEVICE_MAX_CONNECTIONS=1 forces the kernels to be scheduled
+    in the order they are called.
+    Args:
+        input (torch.Tensor required):
+
+third_party/Megatron-LM/megatron/core/transformer/transformer_block.py
+def get_num_layers_to_build(
+    config: TransformerConfig, vp_stage: Optional[int] = None, pp_rank: Optional[int] = None
 ) -> int:
-    """Prefetch all UVM-allocated parameters (and optionally buffers) of a module.
-    Iterates through all parameters of the module and initiates an asynchronous
-    migration to the target device. This is typically used to offload weights to
-    CPU during training or prefetch them to GPU before inference.
+    """
+    Determine the number of transformer layers to build for the current pipeline stage.
     Args:
-        module (torch.nn.Module):
-def advise_managed_module_parameters_preferred_location(
-    module, *, device: int, include_buffers: bool = False
-) -> None:
-    """Set the preferred physical location hint for all UVM parameters in a module.
+        config (TransformerConfig):
+def _get_block_submodules(
+    config: TransformerConfig,
+    spec: Union[TransformerBlockSubmodules, ModuleSpec],
+    vp_stage: Optional[int] = None,
+    pp_rank: Optional[int] = None,
+) -> TransformerBlockSubmodules:
+    """
+    Retrieve or construct TransformerBlockSubmodules based on the provided specification.
     Args:
-        module (torch.nn.Module):
+        config (TransformerConfig):
 
-third_party/Megatron-LM/megatron/core/inference/contexts/dynamic_context.py
-def get_mem_size_str(n_bytes: int) -> str:
-    """Convert number of bytes to human-readable string."""
-    for exp, suffix in ((4, "TB"), (3, "GB"), (2, "MB"), (3, "KB"), (0, "bytes")):
-
-third_party/Megatron-LM/megatron/core/inference/text_generation_server/dynamic_text_gen_server/flask_server.py
-def temp_log_level(level, logger=None):
-
-third_party/Megatron-LM/megatron/core/inference/inference_request.py
-def serialize_tensor(tensor: torch.Tensor) -> bytes:
-    """Serialize tensor to bytes.
+third_party/Megatron-LM/megatron/core/optimizer/clip_grads.py
+def get_grad_norm_fp32(
+    grads_for_norm: Union[List[torch.Tensor], torch.Tensor],
+    norm_type: Union[int, float] = 2,
+    grad_stats_parallel_group: Optional[torch.distributed.ProcessGroup] = None,
+) -> float:
+    """Calculate the norm of gradients in fp32.
+    This is adapted from torch.nn.utils.clip_grad.clip_grad_norm_ and
+    added functionality to handle model parallel parameters.
+    Arguments:
+        grads_for_norm (Iterable[Tensor] or Tensor):
+def clip_grad_by_total_norm_fp32(
+    parameters: Union[List[torch.Tensor], torch.Tensor],
+    max_norm: Union[int, float],
+    total_norm: float,
+    use_decoupled_grad: bool = False,
+):
+def count_zeros_fp32(
+    parameters: Union[List[torch.Tensor], torch.Tensor],
+    grad_stats_parallel_group: torch.distributed.ProcessGroup,
+    use_decoupled_grad: bool = False,
+    tp_group: Optional[torch.distributed.ProcessGroup] = None,
+) -> float:
+    """Counts the number of zeros in gradients associated with the passed-in list of
+    parameters.
     Args:
-        tensor (Tensor):
-def deserialize_tensor(tensor_bytes: bytes) -> torch.Tensor:
-    """Deserialize tensor from bytes.
+        parameters (Iterable[Tensor] or Tensor):
+
+third_party/Megatron-LM/megatron/core/pipeline_parallel/combined_1f1b.py
+def combined_1f1b_schedule_for_no_pipelining(
+    forward_step_func,
+    data_iterator,
+    model,
+    num_microbatches,
+    input_tensor,
+    output_tensor_grad,
+    forward_data_store,
+    config,
+    collect_non_loss_data,
+    first_val_step,
+    forward_only,
+    no_sync_func,
+    total_num_tokens,
+    check_first_val_step,
+):
+def combined_1f1b_schedule_for_interleaved_pipelining(
+    config,
+    forward_step_func,
+    data_iterator,
+    model,
+    num_microbatches,
+    forward_data_store,
+    forward_step_helper_preprocess,
+    forward_step_helper_postprocess,
+    backward_step_helper_preprocess,
+    backward_step_helper_postprocess,
+    get_microbatch_id_in_model_chunk,
+    get_model_chunk_id,
+    check_first_val_step,
+    is_first_microbatch_for_model_chunk,
+    collect_non_loss_data,
+    f_virtual_microbatch_id=None,
+    b_virtual_microbatch_id=None,
+    pre_forward=None,
+    pre_backward=None,
+    post_forward=None,
+    post_backward=None,
+):
+def combined_forward_backward_step(
+    forward_step_func,
+    data_iterator,
+    f_model,
+    num_microbatches,
+    input_tensor,
+    forward_data_store,
+    b_model,
+    b_input_tensor,
+    b_output_tensor,
+    b_output_tensor_grad,
+    config,
+    f_model_chunk_id=None,
+    pre_forward=None,
+    pre_backward=None,
+    post_forward=None,
+    post_backward=None,
+    collect_non_loss_data=False,
+    checkpoint_activations_microbatch=None,
+    is_first_microbatch=False,
+    current_microbatch=None,
+    encoder_decoder_xattn=False,
+):
+
+third_party/Megatron-LM/megatron/core/typed_torch.py
+def apply_module(m: _Module[P, R_co], *, check_subclass: bool = True) -> Callable[P, R_co]:
+    """Returns the provided module unchanged, but with correct type hints.
     Args:
-        tensor_bytes (bytes):
-
-third_party/Megatron-LM/megatron/core/inference/text_generation_server/dynamic_text_gen_server/tokenization.py
-def tokenize_prompts(
-    tokenizer, prompts=None, tokens_to_generate=None, add_BOS=None, rank=0, data_parallel=False
+      m: An instance of a subclass of `torch.nn.Module`.
+      check_subclass: If `True`, checks that `m` is a subclass of
+            `torch.nn.Module` and raises a `TypeError` if not.
+    Returns:
+      That module unchanged, but with correct type hints.
+    """
+    if check_subclass and not issubclass(type(m), torch.nn.Module):
+def not_none(value: T | None) -> T:
+    """Asserts that the provided value is not None and returns it.
+    Args:
+        value: An optional value.
+    Returns:
+        The provided value, guaranteed to be not None.
+    """
+    if value is None:
+        raise ValueError('Expected value to be not None')
+    return value
+R_src = TypeVar('R_src')
+R_dst = TypeVar('R_dst')
+P_src = ParamSpec('P_src')
+P_dst = ParamSpec('P_dst')
+First_dst = TypeVar('First_dst')
+@overload
+def copy_signature(
+    source: Callable[P_src, Any],
+    /,
+    *,
+    handle_return_type: Literal['preserve'] = 'preserve',
+    handle_first_src_param: Literal['copy'] = 'copy',
+    handle_first_dst_param: Literal['drop'] = 'drop',
+) -> Callable[[Callable[..., R_dst]], Callable[P_src, R_dst]]: ...
+@overload
+def copy_signature(
+    source: Callable[P_src, R_src],
+    /,
+    *,
+    handle_return_type: Literal['overwrite'],
+    handle_first_src_param: Literal['copy'] = 'copy',
+    handle_first_dst_param: Literal['drop'] = 'drop',
+) -> Callable[[Callable[..., Any]], Callable[P_src, R_src]]: ...
+@overload
+def copy_signature(
+    source: Callable[Concatenate[Any, P_src], Any],
+    /,
+    *,
+    handle_return_type: Literal['preserve'] = 'preserve',
+    handle_first_src_param: Literal['skip'],
+    handle_first_dst_param: Literal['drop'] = 'drop',
+) -> Callable[[Callable[..., R_dst]], Callable[P_src, R_dst]]: ...
+@overload
+def copy_signature(
+    source: Callable[Concatenate[Any, P_src], R_src],
+    /,
+    *,
+    handle_return_type: Literal['overwrite'],
+    handle_first_src_param: Literal['skip'],
+    handle_first_dst_param: Literal['drop'] = 'drop',
+) -> Callable[[Callable[..., Any]], Callable[P_src, R_src]]: ...
+@overload
+def copy_signature(
+    source: Callable[P_src, Any],
+    /,
+    *,
+    handle_return_type: Literal['preserve'] = 'preserve',
+    handle_first_src_param: Literal['copy'] = 'copy',
+    handle_first_dst_param: Literal['preserve'],
+) -> Callable[
+    [Callable[Concatenate[First_dst, ...], R_dst]], Callable[Concatenate[First_dst, P_src], R_dst]
+]: ...
+@overload
+def copy_signature(
+    source: Callable[P_src, R_src],
+    /,
+    *,
+    handle_return_type: Literal['overwrite'],
+    handle_first_src_param: Literal['copy'] = 'copy',
+    handle_first_dst_param: Literal['preserve'],
+) -> Callable[
+    [Callable[Concatenate[First_dst, ...], Any]], Callable[Concatenate[First_dst, P_src], R_src]
+]: ...
+@overload
+def copy_signature(
+    source: Callable[Concatenate[Any, P_src], Any],
+    /,
+    *,
+    handle_return_type: Literal['preserve'] = 'preserve',
+    handle_first_src_param: Literal['skip'],
+    handle_first_dst_param: Literal['preserve'],
+) -> Callable[
+    [Callable[Concatenate[First_dst, ...], R_dst]], Callable[Concatenate[First_dst, P_src], R_dst]
+]: ...
+@overload
+def copy_signature(
+    source: Callable[Concatenate[Any, P_src], R_src],
+    /,
+    *,
+    handle_return_type: Literal['overwrite'],
+    handle_first_src_param: Literal['skip'],
+    handle_first_dst_param: Literal['preserve'],
+) -> Callable[
+    [Callable[Concatenate[First_dst, ...], Any]], Callable[Concatenate[First_dst, P_src], R_src]
+]: ...
+def copy_signature(
+    source: Callable[..., Any],
+    /,
+    *,
+    handle_return_type: Literal['preserve', 'overwrite'] = 'preserve',
+    handle_first_src_param: Literal['copy', 'skip'] = 'copy',
+    handle_first_dst_param: Literal['preserve', 'drop'] = 'drop',
 ):
-def _tokenize_prompts_and_batch(tokenizer, prompts, tokens_to_generate, add_BOS):
-
-third_party/Megatron-LM/megatron/core/inference/text_generation_server/run_mcore_engine.py
-def run_mcore_engine(
-    engine,
-    prompts=None,
-    temperature=1.0,
-    top_k=0,
-    top_p=0.0,
-    logprobs=True,
-    tokens_to_generate=0,
-    top_n_logprobs=0,
-    random_seed=-1,
-):
-
-third_party/Megatron-LM/megatron/core/inference/communication_utils.py
-def is_pipeline_first_stage(pp_group: ProcessGroup):
-def is_pipeline_last_stage(pp_group: ProcessGroup):
-def _is_cuda(tensor):
-def _is_cuda_contiguous(tensor):
-def broadcast_from_last_pipeline_stage(
-    size: List[int],
-    dtype: torch.dtype,
-    tensor: Optional[torch.Tensor] = None,
-    pp_group: Optional[ProcessGroup] = None,
-):
-def recv_from_prev_pipeline_rank_(
-    recv_buffer: torch.Tensor = None, pp_group: Optional[ProcessGroup] = None
-):
-def send_to_next_pipeline_rank(
-    tensor: torch.Tensor = None, pp_group: Optional[ProcessGroup] = None
-):
-def broadcast_tensor(size, dtype, tensor=None, rank=0, data_parallel=False):
-def broadcast_list(size, dtype, list_values=None, rank=0, data_parallel=False):
-def broadcast_int_list(size, int_list=None, rank=0, data_parallel=False):
-def broadcast_float_list(size, float_list=None, rank=0, data_parallel=False):
-
-third_party/Megatron-LM/megatron/core/inference/text_generation_server/endpoints/common.py
-def send_do_generate():
-
-third_party/Megatron-LM/megatron/core/safe_globals.py
-def register_safe_globals():
-
-third_party/Megatron-LM/megatron/core/inference/text_generation_server/endpoints/completions.py
-def detokenize(prompt, tok) -> list[str]:
-    """Detokenizes the given prompt."""
-    if isinstance(prompt, str):
-
-third_party/Megatron-LM/megatron/core/msc_utils.py
-def open_file(*args, **kwargs):
-
-third_party/Megatron-LM/megatron/core/inference/communication/torch_symm_triton/fused_collectives.py
-def unpack_bf16x2(x, mask):
-def sum_sq(x, y, z, w, mask):
-def apply_norm(x, y, z, w, wx, wy, wz, ww, rrms, mask):
-def _multimem_reduce_scatter_residual_add_kernel(
-    residual_output_ptr,
-    residual_input_ptr,
-    rms_norm_weights_ptr,
-    multicast_ptr,  # points to symmetric memory buffer
-    signal_pad_ptrs,
-    num_tokens,
-    eps,
-    HIDDEN_SIZE: tl.constexpr,
-    BLOCK_SIZE: tl.constexpr,
-    NUMEL_PER_THREAD: tl.constexpr,
-    RANK: tl.constexpr,
-    WORLD_SIZE: tl.constexpr,
-):
-
-third_party/Megatron-LM/megatron/core/inference/text_generation_server/tokenization.py
-def tokenize_prompts(
-    tokenizer, prompts=None, tokens_to_generate=None, add_BOS=None, rank=0, data_parallel=False
-):
-def _tokenize_prompts_and_batch(tokenizer, prompts, tokens_to_generate, add_BOS):
 
 third_party/Megatron-LM/megatron/core/inference/contexts/attention_context/triton/tensor_ops.py
 def _tensor_get_slice_after_kernel(
@@ -393,490 +1149,173 @@ def tensor_merge(
 ):
 def tensor_masked_update(states: torch.Tensor, idx: torch.Tensor, new_states: torch.Tensor):
 
-third_party/Megatron-LM/megatron/core/inference/communication/torch_symm_triton/barrier.py
-def _send_signal(addrs, sem: tl.constexpr):
-def _wait_signal(addrs, sem: tl.constexpr):
-def symm_mem_sync(
-    signal_pad_ptrs,
-    block_id,
-    rank: tl.constexpr,
-    world_size: tl.constexpr,
-    hasPreviousMemAccess: tl.constexpr = False,
-    hasSubsequentMemAccess: tl.constexpr = False,
-):
+third_party/Megatron-LM/megatron/core/datasets/object_storage_utils.py
+def _remove_s3_prefix(path: str) -> str:
+    """Remove the S3 prefix from a path
+    Args:
+        path (str):
+def _is_s3_path(path: str) -> bool:
+    """Ascertain whether a path is in S3
+    Args:
+        path (str):
+def _remove_msc_prefix(path: str) -> str:
+    """
+    Remove the MSC prefix from a path
+    Args:
+        path (str):
+def _is_msc_path(path: str) -> bool:
+    """Checks whether a path is in MSC path (msc://profile/path/to/file)
+    Args:
+        path (str):
+def _s3_download_file(client: S3Client, s3_path: str, local_path: str) -> None:
+    """Download the object at the given S3 path to the given local file system path
+    Args:
+        client (S3Client):
+def _s3_object_exists(client: S3Client, path: str) -> bool:
+    """Ascertain whether the object at the given S3 path exists in S3
+    Args:
+        client (S3Client):
+def is_object_storage_path(path: str) -> bool:
+    """Ascertain whether a path is in object storage
+    Args:
+        path (str):
+def get_index_cache_path(idx_path: str, object_storage_config: ObjectStorageConfig) -> str:
+    """Get the index cache path for the given path
+    Args:
+        idx_path (str):
+def parse_s3_path(path: str) -> Tuple[str, str]:
+    """Parses the given S3 path returning correspsonding bucket and key.
+    Args:
+        path (str):
+def get_object_storage_access(path: str) -> str:
+    """Get the object storage access"""
+    return "s3" if _is_s3_path(path) else "msc"
+def dataset_exists(path_prefix: str, idx_path: str, bin_path: str) -> bool:
+    """Check if the dataset exists on object storage
+    Args:
+        path_prefix (str):
+def cache_index_file(remote_path: str, local_path: str) -> None:
+    """Download a file from object storage to a local path with distributed training support.
+    The download only happens on Rank 0, and other ranks will wait for the file to be available.
+    Note that this function does not include any barrier synchronization. The caller (typically
+    in blended_megatron_dataset_builder.py) is responsible for ensuring proper synchronization
+    between ranks using torch.distributed.barrier() after this function returns.
+    Args:
+        remote_path (str):
 
-third_party/Megatron-LM/megatron/core/tensor_parallel/layers.py
-def param_is_not_tensor_parallel_duplicate(param, tp_group=None):
-def set_tensor_model_parallel_attributes(tensor, is_parallel, dim, stride):
-def set_defaults_if_not_set_tensor_model_parallel_attributes(tensor):
-def copy_tensor_model_parallel_attributes(destination_tensor, source_tensor):
-def _initialize_affine_weight_gpu(weight, init_method, partition_dim, stride=1, is_expert=False):
-def _initialize_affine_weight_cpu(
-    weight,
-    output_size,
-    input_size,
-    per_partition_size,
-    partition_dim,
-    init_method,
-    stride=1,
-    return_master_weight=False,
-    *,
-    params_dtype=torch.float32,
-    rank=None,
-    world_size=None,
-    skip_set_tensor_parallel_attributes=False,
+third_party/Megatron-LM/megatron/core/fusions/fused_mla_yarn_rope_apply.py
+def _get_thd_token_idx(cu_seqlens, pid_m, seq_num, cp_rank, cp_size):
+def rotary_fwd_q_kernel(
+    Q,
+    COS,
+    SIN,
+    qk_head_dim,
+    emb_dim: tl.constexpr,
+    head_num: tl.constexpr,
+    batch_size,
+    seq_num,
+    cu_seqlens_q,
+    stride_x_seq,
+    stride_x_nheads,
+    cp_rank,
+    cp_size,
+    BLOCK_H: tl.constexpr,
 ):
-def linear_with_frozen_weight(
-    input: torch.Tensor,
-    weight: torch.Tensor,
-    bias: Optional[torch.Tensor],
-    gradient_accumulation_fusion: bool,
-    allreduce_dgrad: bool,
-    sequence_parallel: bool,
-    tp_group: Optional[torch.distributed.ProcessGroup],
-    grad_output_buffer: Optional[List[torch.Tensor]] = None,
-    wgrad_deferral_limit: None = None,
-    async_grad_allreduce: Optional[bool] = None,
-) -> torch.Tensor:
-    """Linear layer execution with weight.requires_grad == False.
-    This function handles linear layers with weight frozen (untrainable).
-    In the forward, it only saves weight and does not save input activations.
-    In the backward, it does not perform weight gradient calculation, or
-    weight gradient allreduce.
-    Args:
-    input (torch.Tensor required):
-def linear_with_grad_accumulation_and_async_allreduce(
-    input: torch.Tensor,
-    weight: torch.Tensor,
-    bias: Optional[torch.Tensor],
-    gradient_accumulation_fusion: bool,
-    allreduce_dgrad: bool,
-    sequence_parallel: bool,
-    grad_output_buffer: Optional[List[torch.Tensor]] = None,
-    wgrad_deferral_limit: Optional[int] = 0,
-    async_grad_allreduce: Optional[bool] = None,
-    tp_group: Optional[torch.distributed.ProcessGroup] = None,
-) -> torch.Tensor:
-    """Linear layer execution with asynchronous communication and
-    gradient accumulation fusion in backprop.
-    This has the option to accumulate the result of backprop
-    calculation into an existing gradient buffer, preventing the need
-    to do an additional addition kernel after the gradient
-    calculation.
-    Additionally, the tensor parallel all reduce of the input
-    gradients can be done asynchronously with the calculation of
-    the weight gradients.
-    In the case of sequence parallelism, the reduce scatter of the
-    input gradients is done asynchronously with the calculation of the
-    weight gradients.
-    Use of this module requires that the environment variable
-    CUDA_DEVICE_MAX_CONNECTIONS=1. There are a few collective
-    operations, noted in the code, that should be scheduled before
-    compute kernels to overlap the communication with the computation,
-    which is necessary for a speedup but not for correctness so that
-    ordering isn't imposed by the scheduler. Setting
-    CUDA_DEVICE_MAX_CONNECTIONS=1 forces the kernels to be scheduled
-    in the order they are called.
-    Args:
-        input (torch.Tensor required):
-
-third_party/Megatron-LM/megatron/core/nccl_allocator.py
-def _build_nccl_allocator():
-def get_func_args(func):
-def create_nccl_mem_pool(symmetric=None):
-def init() -> None:
-    """
-    Initialize the NCCL allocator.
-    PyTorch tracks memory registration at the pool level, not per allocation.
-    If a pool already contains allocations from a previous context, attempting
-    to register it again will re-register all existing allocations and may
-    trigger NCCL errors. To avoid this, the pool is explicitly deregistered
-    on entry and re-registered on exit for each context use.
-    """
-    # Enables NCCL NVLS algorithm
-    os.environ["NCCL_NVLS_ENABLE"] = "1"
-    # Disables the use of the tensor register allocator hook
-    os.environ["TORCH_NCCL_USE_TENSOR_REGISTER_ALLOCATOR_HOOK"] = "0"
-    _build_nccl_allocator()
-    logging.info(f"[MCORE][NCCL_ALLOCATOR] Initialized NCCL Allocator")
-# register_mem_pool/deregister_mem_pool are used for manual (de)registration of the memory pool.
-# They are used in the case of FSDP manual registration.
-def register_mem_pool(pool, group, symmetric=True):
-def deregister_mem_pool(pool, group):
-
-third_party/Megatron-LM/megatron/core/inference/engines/dynamic_engine.py
-def format_mem_bytes(mem_bytes):
-
-third_party/Megatron-LM/megatron/core/typed_torch.py
-def apply_module(m: _Module[P, R_co], *, check_subclass: bool = True) -> Callable[P, R_co]:
-    """Returns the provided module unchanged, but with correct type hints.
-    Args:
-      m: An instance of a subclass of `torch.nn.Module`.
-      check_subclass: If `True`, checks that `m` is a subclass of
-            `torch.nn.Module` and raises a `TypeError` if not.
-    Returns:
-      That module unchanged, but with correct type hints.
-    """
-    if check_subclass and not issubclass(type(m), torch.nn.Module):
-
-third_party/Megatron-LM/megatron/core/distributed/finalize_model_grads.py
-def _get_main_grad_attr(param: torch.nn.Parameter):
-def _unshard_if_dtensor(tensor: Union[torch.Tensor, "DTensor"]) -> torch.Tensor:
-    """
-    Unshards the input tensor if it is a DTensor and otherwise returns the
-    tensor unmodified.
-    Args:
-        tensor (Union[torch.Tensor, DTensor]):
-def _reshard_if_dtensor(
-    tensor_to_shard: torch.Tensor, reference_tensor: Union[torch.Tensor, "DTensor"]
-) -> Union[torch.Tensor, "DTensor"]:
-    """
-    Reshards the input tensor to match the sharding configuration of the
-    reference tensor if the reference tensor is a DTensor. Otherwise, returns
-    the reference tensor unmodified.
-    Args:
-        tensor_to_shard (torch.Tensor):
-def _allreduce_conditional_embedding_grads(
-    model: List[torch.nn.Module],
-    config: TransformerConfig,
-    pp_group: Optional[torch.distributed.ProcessGroup] = None,
+def rotary_bwd_q_kernel(
+    DO,
+    COS,
+    SIN,
+    qk_head_dim,
+    emb_dim: tl.constexpr,
+    head_num: tl.constexpr,
+    batch_size,
+    seq_num,
+    cu_seqlens_q,
+    stride_x_seq,
+    stride_x_nheads,
+    cp_rank,
+    cp_size,
+    BLOCK_H: tl.constexpr,
 ):
-def _get_shared_word_embedding_weight(
-    model_module: torch.nn.Module, config: TransformerConfig
-) -> Optional[torch.nn.Parameter]:
-    """Return the shared word-embedding weight if it is duplicated across stages.
-    Args:
-        model_module: The model module from which to extract the
-            word-embedding weight.
-        config: Transformer config.
-    Returns:
-        The shared embedding or output weight if available; otherwise ``None``.
-    """
-    # Only reduce if weights are duplicated across stages.
-    if model_module.share_embeddings_and_output_weights or getattr(config, 'mtp_num_layers', 0):
-def _get_position_embedding_weight(model_module: torch.nn.Module) -> torch.nn.Parameter:
-    """Return the position-embedding weight tensor from the given model module.
-    Args:
-        model_module: The model module that owns the
-            position-embedding parameter.
-    Returns:
-        The position-embedding weight tensor.
-    """
-    return getattr(model_module, 'position_embeddings').weight  # type: ignore[attr-defined]
-def _allreduce_word_embedding_grads(
-    model: List[torch.nn.Module],
-    config: TransformerConfig,
-    embd_group: Optional[torch.distributed.ProcessGroup] = None,
-    pp_group: Optional[torch.distributed.ProcessGroup] = None,
-):
-def _allreduce_embedding_grad(
-    model: List[torch.nn.Module],
-    embd_group: torch.distributed.ProcessGroup,
-    pp_group: torch.distributed.ProcessGroup,
-    weight_getter: Callable[[torch.nn.Module], Optional[torch.nn.Parameter]],
-    skip_if_none: bool = True,
-    config: TransformerConfig = None,
-):
-def _allreduce_position_embedding_grads(
-    model: List[torch.nn.Module],
-    config: TransformerConfig,
-    pos_emb_group: torch.distributed.ProcessGroup,
-    pp_group: torch.distributed.ProcessGroup,
-):
-def reset_model_temporary_tensors(config: TransformerConfig, model: List[torch.nn.Module]):
-def _update_router_expert_bias(model: List[torch.nn.Module], config: TransformerConfig):
-def _allreduce_non_tensor_model_parallel_grads(
-    model: List[torch.nn.Module],
-    config: TransformerConfig,
-    tp_group: Optional[torch.distributed.ProcessGroup] = None,
-):
-def finalize_model_grads(
-    model: List[torch.nn.Module],
-    num_tokens: Optional[torch.Tensor] = None,
-    pg_collection: Optional[ProcessGroupCollection] = None,
-):
-
-third_party/Megatron-LM/megatron/core/models/common/embeddings/rope_utils.py
-def get_pos_emb_on_this_cp_rank(
-    pos_emb: Tensor, seq_dim: int, cp_group: torch.distributed.ProcessGroup
-) -> Tensor:
-    """Get the position embedding on the current context parallel rank.
-    Args:
-        pos_emb (Tensor):
-def _rotate_half(x: Tensor, rotary_interleaved: bool) -> Tensor:
-    """Change sign so the last dimension becomes [-odd, +even]
-    Args:
-        x (Tensor):
-def _apply_rotary_pos_emb_bshd(
-    t: Tensor,
-    freqs: Tensor,
+def fused_apply_mla_rope_for_q(
+    t: torch.Tensor,
+    cos: torch.Tensor,
+    sin: torch.Tensor,
+    qk_head_dim: int,
+    emb_dim: int,
+    cu_seqlens_q: Optional[torch.Tensor] = None,
+    cp_rank: int = 0,
+    cp_size: int = 1,
     rotary_interleaved: bool = False,
-    multi_latent_attention: bool = False,
-    mscale: float = 1.0,
-) -> Tensor:
-    """Apply rotary positional embedding to input tensor T.
-    check https://kexue.fm/archives/8265 for detailed formulas
-    Args:
-        t (Tensor):
-def _get_thd_freqs_on_this_cp_rank(
-    cp_rank: int, cp_size: int, x: Tensor, freqs: Tensor, offset: int = 0
-) -> Tensor:
-    """Get the correct frequency slice for this context parallel rank with optional sequence offset.
-    Args:
-        cp_rank: Current context parallel rank
-        cp_size: Total context parallel size
-        x: Input tensor for current sequence
-        freqs: Frequency tensor - either full batch positions or max sequence length
-        offset: Starting position offset for this sequence in the original batch (default: 0)
-    Returns:
-        Tensor: Frequency slice corresponding to this CP rank's portion of the sequence
-    Note:
-        This function supports two modes based on the offset parameter:
-        1. offset > 0: Exact mapping mode - freqs contains all positions across all sequences.
-           The offset ensures each sequence gets frequencies from its actual position within
-           the overall batch. Critical for non-1D RoPE in VLMs where spatial positions matter.
-        2. offset = 0: Traditional mode - freqs contains only max sequence length positions.
-           All sequences use frequencies starting from position 0, preserving backward
-           compatibility.
-    """
-    if cp_size > 1:
-        cp_seg = x.size(0) // 2
-        full_seqlen = cp_size * x.size(0)
-        # Apply offset to both forward and backward segments for context parallelism
-        # offset=0: traditional behavior, freqs[0:cp_seg] and freqs[...]
-        # offset>0: exact mapping, freqs[offset+0:offset+cp_seg] and freqs[offset+...]
-        return torch.cat(
-            [
-                freqs[offset + cp_rank * cp_seg : offset + (cp_rank + 1) * cp_seg],
-                freqs[
-                    offset
-                    + full_seqlen
-                    - (cp_rank + 1) * cp_seg : offset
-                    + full_seqlen
-                    - cp_rank * cp_seg
-                ],
-            ]
-        )
-    else:
-        # For single context parallel rank:
-        # offset=0: use freqs[0:x.size(0)] (traditional)
-        # offset>0: use freqs[offset:offset+x.size(0)] (exact mapping)
-        return freqs[offset : offset + x.size(0)]
-def _apply_rotary_pos_emb_thd(
-    t: Tensor,
-    cu_seqlens: Tensor,
-    freqs: Tensor,
+):
+def rotary_fwd_kv_kernel(
+    KV,
+    K_POS_EMB,
+    O_KEY,
+    O_VALUE,
+    COS,
+    SIN,
+    emb_dim: tl.constexpr,
+    k_dim: tl.constexpr,
+    v_dim: tl.constexpr,
+    head_num: tl.constexpr,
+    batch_size,
+    seq_num,
+    cu_seqlens_kv,
+    stride_kv_seq,
+    stride_kv_nheads,
+    stride_emb_seq,
+    stride_k_seq,
+    stride_k_nheads,
+    stride_v_seq,
+    stride_v_nheads,
+    cp_rank,
+    cp_size,
+    BLOCK_H: tl.constexpr,
+):
+def rotary_bwd_kv_kernel(
+    dK,
+    dV,
+    dKV,
+    dEMB,
+    COS,
+    SIN,
+    emb_dim: tl.constexpr,
+    k_dim: tl.constexpr,
+    v_dim: tl.constexpr,
+    head_num: tl.constexpr,
+    batch_size,
+    seq_num,
+    cu_seqlens_kv,
+    stride_dk_seq,
+    stride_dk_nheads,
+    stride_dv_seq,
+    stride_dv_nheads,
+    stride_dkv_seq,
+    stride_dkv_nheads,
+    stride_demb_seq,
+    cp_rank,
+    cp_size,
+    BLOCK_H: tl.constexpr,
+):
+def fused_apply_mla_rope_for_kv(
+    kv: torch.Tensor,
+    k_pos_emb: torch.Tensor,
+    cos: torch.Tensor,
+    sin: torch.Tensor,
+    emb_dim: int,
+    k_dim: int,
+    v_dim: int,
+    cu_seqlens_kv: Optional[torch.Tensor] = None,
+    cp_rank: int = 0,
+    cp_size: int = 1,
     rotary_interleaved: bool = False,
-    multi_latent_attention: bool = False,
-    mscale: float = 1.0,
-    cp_group: torch.distributed.ProcessGroup = None,
-) -> Tensor:
-    """A baseline implementation of applying RoPE for `thd` format.
-    Args:
-        t (Tensor):
-def apply_rotary_pos_emb(
-    t: Tensor,
-    freqs: Tensor,
-    config: TransformerConfig,
-    cu_seqlens: Optional[Tensor] = None,
-    mscale: float = 1.0,
-    cp_group: torch.distributed.ProcessGroup = None,
 ):
-def apply_rotary_pos_emb_with_cos_sin(
-    t: Tensor, cos: Tensor, sin: Tensor, rotary_interleaved: bool = False
-) -> Tensor:
-    """
-    This function applies rotary positional embedding to the target tensor t
-    using precomputed cos and sin of size (seq_len, d_rot / 2)
-    """
-    cos = cos.to(t.dtype)
-    sin = sin.to(t.dtype)
-    if apply_rotary_emb_flash is None:
-        # Combine cos and sin into freqs
-        freqs = torch.stack([cos, sin], dim=-1).flatten(start_dim=-2)
-        # Expand freqs to match t's shape
-        while freqs.dim() < t.dim():
 
-third_party/Megatron-LM/megatron/core/inference/communication/torch_symm_triton/collectives.py
-def _multimem_all_gather_kernel(
-    local_ptr,
-    multicast_ptr,
-    signal_pad_ptrs,
-    numel,
-    BLOCK_SIZE: tl.constexpr,
-    NUMEL_PER_THREAD: tl.constexpr,
-    RANK: tl.constexpr,
-    WORLD_SIZE: tl.constexpr,
+third_party/Megatron-LM/megatron/core/transformer/mlp.py
+def apply_swiglu_sharded_factory(
+    original_sh_ten, sharded_offsets, singleton_local_shards: bool = False
 ):
-def multimem_all_gather(
-    output_tensor: torch.Tensor,
-    input_tensor: torch.Tensor,
-    symm_mem_hdl: _SymmetricMemory,
-    **kwargs,
-) -> torch.Tensor:
-    """
-    Calls a multicast all-gather triton kernel on the given tensor.
-    Output tensor must be a symmetric memory buffer.
-    Input tensor can be a regular torch tensor
-    Arguments:
-        output_tensor: torch.Tensor - output tensor to be all-gathered into
-        input_tensor: torch.Tensor - input tensor to be all-gathered from
-        symm_mem_hdl: _SymmetricMemory - handle to the symmetric memory buffer for output_tensor
-    Returns:
-        torch.Tensor - all-gathered tensor, which is output_tensor
-    """
-    assert HAVE_TRITON, "Triton is required for multimem all-gather."
-    config = {
-        "max_num_blocks": kwargs.get("max_num_blocks", 24),
-        "num_warps": kwargs.get("num_warps", 32),
-        "BLOCK_SIZE": kwargs.get("BLOCK_SIZE", 1024),
-    }
-    assert input_tensor.dtype == torch.bfloat16, "Only bfloat16 is supported for now."
-    assert output_tensor.dtype == torch.bfloat16, "Only bfloat16 is supported for now."
-    numel_per_thread = 128 // (input_tensor.element_size() * 8)
-    assert (
-        output_tensor.numel() % numel_per_thread == 0
-    ), "The number of elements must be 128-bit aligned."
-    num_threads = triton.cdiv(output_tensor.numel() // numel_per_thread, symm_mem_hdl.world_size)
-    num_blocks = min(triton.cdiv(num_threads, config["BLOCK_SIZE"]), config["max_num_blocks"])
-    _multimem_all_gather_kernel[(num_blocks, 1, 1)](
-        input_tensor.data_ptr(),
-        symm_mem_hdl.multicast_ptr,
-        symm_mem_hdl.signal_pad_ptrs_dev,
-        numel=output_tensor.numel(),
-        BLOCK_SIZE=config["BLOCK_SIZE"],
-        NUMEL_PER_THREAD=numel_per_thread,
-        RANK=symm_mem_hdl.rank,
-        WORLD_SIZE=symm_mem_hdl.world_size,
-        num_warps=config["num_warps"],
-    )
-    return output_tensor
-@triton.jit
-def _multimem_reduce_scatter_kernel(
-    local_ptr,
-    multicast_ptr,
-    signal_pad_ptrs,
-    numel,
-    BLOCK_SIZE: tl.constexpr,
-    NUMEL_PER_THREAD: tl.constexpr,
-    RANK: tl.constexpr,
-    WORLD_SIZE: tl.constexpr,
-):
-def multimem_reduce_scatter(
-    output_tensor: torch.Tensor,
-    input_tensor: torch.Tensor,
-    symm_mem_hdl: _SymmetricMemory,
-    **kwargs,
-) -> torch.Tensor:
-    """
-    Calls a multicast reduce-scatter triton kernel on the given tensor.
-    Input tensor must be a symmetric memory buffer.
-    Output tensor can be a regular torch tensor
-    Arguments:
-        output_tensor: torch.Tensor - output tensor to be reduce-scattered into
-        input_tensor: torch.Tensor - input tensor to be reduce-scattered from
-        symm_mem_hdl: _SymmetricMemory - handle to the symmetric memory buffer for input_tensor
-        **kwargs: Additional keyword arguments for kernel configuration:
-            max_num_blocks (int, optional):
-
-third_party/Megatron-LM/megatron/core/fp4_utils.py
-def is_nvfp4tensor(tensor: torch.Tensor) -> bool:
-    """Check if a tensor is a Transformer Engine NVFP4Tensor."""
-    return HAVE_TE_FP4_TENSOR_CLASS and isinstance(tensor, FP4_TENSOR_CLASS)
-def get_fp4_align_size(fp4_recipe: Fp4Recipe) -> int:
-    """
-    Get the alignment size required for FP4 GEMM.
-    FP4 GEMM requires Blackwell and later architectures.
-    The value 32 is a hardware requirement: TMA (Tensor Memory Accelerator) requires
-    a 16-byte aligned address for efficient memory access. Since FP4 uses 4 bits per value,
-    16 bytes (128 bits) corresponds to 32 FP4 values. Therefore, the alignment size for FP4
-    is 32. With this alignment, NVFP4 GEMM can be performed efficiently.
-    Note that since we are also random hadamard transform for NVFP4 training, we want
-    fused group nvfp4 quantize plus hadamard transform. Hadamard transform will leverage
-    tensor core instructions for better performance, while group quantize kernels also
-    prefer a more aligned size in token dimension M. The efficiently leverage grouped
-    kernels, padding needs to be 64 multiple, but 128 multiple will bring even faster.
-    When it comes to MOE cuda graph support, the number of tokens for each expert should
-    be a buffer on device memory, which means that we don't know the token dimension for
-    each expertin host, therefore we cannot calculate the zero padded scaling factors shape
-    on host to comply with the NVFP4 GEMM scaling factor layout. However, if we have already
-    zero padded the tokens to 128 multiple, then there is no need for such padding, so that
-    host doesn't need to copy the token distribution from device to host (which will break
-    the CUDA graph).
-    Paper link: https://arxiv.org/pdf/2509.25149
-    Scaling factor layout: https://docs.nvidia.com/cuda/cublas/#d-block-scaling-factors-layout
-    TE NVFP4 Grouped Quantization: https://github.com/NVIDIA/TransformerEngine/pull/2411
-    """
-    # pylint: disable=unused-argument
-    return 128
-def dequantize_fp4_tensor(fp4_tensor: torch.Tensor) -> torch.Tensor:
-    """Dequantize a fp4 tensor to a higher precision tensor."""
-    if is_te_min_version("2.7.0.dev0"):
-
-third_party/Megatron-LM/megatron/core/export/trtllm/trtllm_weights_converter/utils.py
-def is_gated_activation(helper):
-
-third_party/Megatron-LM/megatron/core/inference/communication/torch_symm_triton/utils.py
-def get_tid():
-def get_ntid():
-def get_flat_tid():
-def get_flat_bid():
-def sync_threads():
-
-third_party/Megatron-LM/megatron/core/tensor_parallel/cross_entropy.py
-def vocab_parallel_cross_entropy(vocab_parallel_logits, target, label_smoothing=0.0):
-
-third_party/Megatron-LM/megatron/core/inference/utils.py
-def get_attention_mask(seq_length: int) -> torch.Tensor:
-    """Constructs an attention mask given the input sequence length."""
-    attention_mask = torch.tril(
-        torch.ones((1, seq_length, seq_length), device=torch.cuda.current_device())
-    ).view(1, 1, seq_length, seq_length)
-    # Convert to boolean
-    attention_mask = attention_mask < 0.5
-    return attention_mask
-# Initialize cache for sequence parallel modules
-moe_layer_cache = None
-def _init_moe_expert_cache(model):
-def set_decode_expert_padding(model, set_to: bool = False, capacity_factor: int = None):
-def tensor_swap(x, src_idxs, dst_idxs):
-
-third_party/Megatron-LM/megatron/core/rerun_state_machine.py
-def initialize_rerun_state_machine(**kwargs) -> None:
-    """Helper function to initialize the rerun machine instance.
-    Check the RerunStateMachine class for the details.
-    """
-    rerun_state_machine: RerunStateMachine = RerunStateMachine(**kwargs)
-    _set_rerun_state_machine(rerun_state_machine)
-def destroy_rerun_state_machine() -> None:
-    """Helper function to shut down the rerun machine instance."""
-    global _GLOBAL_RERUN_STATE_MACHINE
-    _GLOBAL_RERUN_STATE_MACHINE = None
-def get_rerun_state_machine() -> RerunStateMachine:
-    """Helper function to return the singleton instance of the rerun machine."""
-    if _GLOBAL_RERUN_STATE_MACHINE is None:
-        logger.warning("Implicit initialization of Rerun State Machine!")
-        initialize_rerun_state_machine()
-        assert _GLOBAL_RERUN_STATE_MACHINE is not None
-    return _GLOBAL_RERUN_STATE_MACHINE
-def _set_rerun_state_machine(rerun_state_machine) -> None:
-    """Internal function to set the singleton instance of the rerun machine."""
-    global _GLOBAL_RERUN_STATE_MACHINE
-    assert _GLOBAL_RERUN_STATE_MACHINE is None, "Rerun state machine is already initialized"
-    _GLOBAL_RERUN_STATE_MACHINE = rerun_state_machine
-def _safe_get_rank() -> int:
-    """Internal function that safely checks and returns the rank of the caller."""
-    if torch.distributed.is_initialized():
-def _compare_floats(a: torch.Tensor, b: torch.Tensor) -> float:
-    """Internal function that implements the default compare_func.
-    Check the validate_result() method of the RerunStateMachine class for details.
-    """
-    af: float = a.item()
-    bf: float = b.item()
-    if (af == bf) or (math.isnan(af) and math.isnan(bf)):
-
-third_party/Megatron-LM/megatron/core/export/trtllm/trtllm_weights_converter/distributed_trtllm_model_weights_converter.py
-def str_dtype_to_torch(dtype: DataType):
 
 third_party/Megatron-LM/megatron/core/tensor_parallel/random.py
 def _get_cuda_rng_state(
@@ -923,99 +1362,482 @@ def is_graph_safe_cuda_rng_tracker(cuda_rng_tracker):
 def _get_all_rng_states():
 def _set_all_rng_states(cpu_rng_state, cuda_rng_state, cuda_rng_state_tracker):
 def _fork_rng():
-def checkpoint(function, distribute_saved_activations, *args):
+def _set_checkpointing():
+def _unset_checkpointing():
+def is_checkpointing():
+def checkpoint(
+    function: Callable[[Unpack[_Ts]], _R], distribute_saved_activations: bool, *args: Unpack[_Ts]
+) -> _R:
+    """Checkpoint a model or part of the model.
+    This has been directly copied from torch.utils.checkpoint."""
+    return CheckpointFunction.apply(function, distribute_saved_activations, *args)
+class CheckpointWithoutOutputFunction(torch.autograd.Function):
 
-third_party/Megatron-LM/megatron/core/optimizer_param_scheduler.py
-def param_group_override_to_tuple(
-    param_group_override: ParamGroupOverride | None,
-) -> tuple[tuple[str, Any], ...] | None:
-    """Convert a param group override to a tuple for use as a key in a dictionary.
-    The tuple is sorted by the keys of the param group override to handle different orderings of
-     the keys in different override dictionaries which still mean the same thing.
+third_party/Megatron-LM/megatron/core/distributed/param_and_grad_buffer.py
+def shard_buffer(buffer: torch.Tensor, data_parallel_world_size: int):
+def partition_buckets(
+    buffers: List[_ParamAndGradBuffer], force_single_bucket_group: bool = False
+) -> List[_ParamAndGradBucketGroup]:
     """
-    if param_group_override is None:
-        return None
-    return tuple(sorted(param_group_override.items()))
-def combine_param_group_overrides(
-    param_group_overrides: list[ParamGroupOverride | None],
-) -> ParamGroupOverride:
-    """Combine a list of param group overrides into a single param group override.
-    This function ensures that the overrides are not conflicting as well.
+    Automatically regroup the buckets of input buffers and return a list of bucket groups.
+    In some scenarios, we need to put buckets from different buffers into a group so that their
+    communication can be aggregated.
+    For example, when there are both fp8 weights and bf16 biases in the model and virtual
+    pipeline parallelism is enabled, each model chunk will have an fp8 bucket and a bf16 bucket,
+    which doubles the number of communication kernels, and because of the use of
+    CUDA_DEVICE_MAX_CONNECTIONS=1, having multiple back-to-back communications will prevent the
+    overlap of communication kernels with computation kernels.
+    The grouping strategy is:
+    1. If force_single_bucket_group is True, put all buckets across all buffers into a single
+       bucket group.
+    2. If force_single_bucket_group is False, when there is no fp8 buffer in the input buffers,
+       let each bucket group have only one bucket.
+    3. If force_single_bucket_group is False, when using fp8 params, merge all non-fp8 buckets
+       into the last fp8 bucket group.
+       - Since the non-fp8 parameters (typically the biases of various layers) are relatively
+         small, they are likely to be grouped into a single non-fp8 bucket.
+       - The fp8 buckets start from the end of the model, i.e., the first bucket corresponds to
+         the end of the model, while the last bucket corresponds to the beginning.
+       - If we combine the non-fp8 bucket with the first fp8 bucket, we cannot initiate the
+         reduce-scatter to synchronize gradients after the backward pass at the end of the model
+         has completed. This is because we need to wait for the non-fp8 params from the beginning
+         layers to obtain their gradients.
+       - Combining the non-fp8 bucket with the last fp8 bucket can help avoid this issue.
     Args:
-        param_group_overrides (list[ParamGroupOverride]):
+        buffers (list):
 
-third_party/Megatron-LM/megatron/core/inference/communication/torch_symm_triton/multimem_asm.py
-def ld_128(ptr, mask, multicast_op: tl.constexpr):
-def st_128(ptr, x, y, z, w, mask, multicast_op):
-def add_v8_bf16_from_u32(
-    a0,
-    a1,
-    a2,
-    a3,  # First vector of 8 bf16s, packed in 4 uint32s
-    b0,
-    b1,
-    b2,
-    b3,  # Second vector of 8 bf16s, packed in 4 uint32s
+third_party/Megatron-LM/megatron/core/fusions/fused_bias_dropout.py
+def _bias_dropout_add_func(x_with_bias, residual, prob, training):
+def bias_dropout_add_unfused(training):
+def bias_dropout_add_fused_train(
+    x_with_bias: Tuple[torch.Tensor, Optional[torch.Tensor]], residual: torch.Tensor, prob: float
+) -> torch.Tensor:
+    return _bias_dropout_add_func(x_with_bias, residual, prob, True)
+@jit_fuser
+def bias_dropout_add_fused_inference(
+    x_with_bias: Tuple[torch.Tensor, Optional[torch.Tensor]], residual: torch.Tensor, prob: float
+) -> torch.Tensor:
+    return _bias_dropout_add_func(x_with_bias, residual, prob, False)
+def get_bias_dropout_add(training, fused):
+
+third_party/Megatron-LM/megatron/core/dist_checkpointing/strategies/filesystem_async.py
+def _get_write_results_queue():
+def _split_by_size_and_type(bins: int, items: List[WriteItem]) -> List[List[WriteItem]]:
+    """
+    Splits write items according to item size into close to uniform bins.
+    Same as torch.distributed.checkpoint.filesystem._split_by_size_and_type,
+    but with a fixed _item_size function.
+    Args:
+        bins (int):
+def _split_by_separation_hint(
+    buckets: List[List[WriteItem]], separation_hint: Optional[str] = None
+) -> Dict[str, List[List[WriteItem]]]:
+    """
+    Splits buckets into those whose keys begin with the separation_hint and those whose keys do not
+    Args:
+        buckets (List[List[WriteItem]]):
+def _item_size(item: WriteItem) -> int:
+    """
+    Calculates size (in bytes) of a single write item.
+    Same as torch.distributed.checkpoint.filesystem._item_size,
+    but fixes computing chunk size (with item.tensor_data.chunk.sizes)
+    Args:
+        item (WriteItem):
+def _process_memory() -> int:
+    """
+    Get memory used by current process.
+    Returns (int):
+
+third_party/Megatron-LM/megatron/core/datasets/gpt_dataset.py
+def _build_document_index(
+    documents: numpy.ndarray,
+    num_epochs: int,
+    numpy_random_state: numpy.random.RandomState,
+    separate_final_epoch: bool,
+) -> numpy.ndarray:
+    """Build an array with length = num epochs * num documents
+    Args:
+        documents (numpy.ndarray):
+def _build_shuffle_index(
+    num_samples: int, total_size: int, numpy_random_state: numpy.random.RandomState
+) -> numpy.ndarray:
+    """Build the range [0, size) and shuffle
+    Args:
+        num_samples (int):
+def _get_ltor_masks_and_position_ids(
+    data: torch.Tensor,
+    eod_token: int,
+    reset_position_ids: bool,
+    reset_attention_mask: bool,
+    eod_mask_loss: bool,
+    create_attention_mask: bool,
 ):
-def asm_rsqrt(x, eps):
-
-third_party/Megatron-LM/megatron/core/export/trtllm/trtllm_weights_converter/single_device_trtllm_model_weights_converter.py
-def pad_vocab_size(vocab_size: int, tp_size: int):
-def str_dtype_to_torch(dtype: DataType):
 
 third_party/Megatron-LM/megatron/core/tensor_parallel/data.py
 def _check_data_types(keys, data, target_dtype):
 def _build_key_size_numel_dictionaries(keys, data, tp_group=None):
 def broadcast_data(keys, data, datatype, tp_group=None):
 
-third_party/Megatron-LM/megatron/core/models/common/embeddings/yarn_rotary_pos_embedding.py
-def _yarn_find_correction_dim(
-    num_rotations: float, dim: int, rotary_base: float = 10000, max_position_embeddings: int = 2048
-) -> float:
-    return (dim * math.log(max_position_embeddings / (num_rotations * 2 * math.pi))) / (
-        2 * math.log(rotary_base)
-    )
-# Find dim range bounds based on rotations
-def _yarn_find_correction_range(
-    low_rot: float,
-    high_rot: float,
-    dim: int,
-    rotary_base: float = 10000,
-    max_position_embeddings: int = 2048,
-    round_to_int: bool = True,
-) -> tuple[int, int]:
-    low = _yarn_find_correction_dim(low_rot, dim, rotary_base, max_position_embeddings)
-    high = _yarn_find_correction_dim(high_rot, dim, rotary_base, max_position_embeddings)
-    if round_to_int:
-        low = math.floor(low)
-        high = math.ceil(high)
-    return max(low, 0), min(high, dim - 1)  # Clamp values just in case
-def _yarn_linear_ramp_mask(min: float, max: float, dim: int, device: torch.device) -> Tensor:
-    if min == max:
-        max += 0.001  # Prevent singularity
-    linear_func = (torch.arange(dim, dtype=torch.float32, device=device) - min) / (max - min)
-    ramp_func = torch.clamp(linear_func, 0, 1)
-    return ramp_func
-def _yarn_get_mscale(scale: float = 1, mscale: float = 1) -> float:
-    if scale <= 1:
-        return 1.0
-    return 0.1 * mscale * math.log(scale) + 1.0
-@lru_cache(maxsize=8)
-def _yarn_get_concentration_factor(
-    scaling_factor: float, mscale: Optional[float], mscale_all_dim: Optional[float]
-) -> float:
+third_party/Megatron-LM/megatron/core/fusions/fused_bias_swiglu.py
+def swiglu(y):
+def bias_swiglu(y, bias):
+def weighted_swiglu(y, weights):
+def swiglu_back(g, y):
+def bias_swiglu_back(g, y, bias):
+def weighted_swiglu_back(g, y, weights):
+def bias_swiglu_impl(input, bias, fp8_input_store=False, cpu_offload_input=False):
+def weighted_bias_swiglu_impl(input, bias, weights, fp8_input_store=False):
+
+third_party/Megatron-LM/megatron/core/pipeline_parallel/fine_grained_activation_offload.py
+def debug_rank(message):
+def print_offload_summary_table(total_offload_bytes: Dict[str, int]):
+def fine_grained_offloading_disable_offload():
+def fine_grained_offloading_enable_offload():
+def fine_grained_offloading_group_commit(
+    tensor, name, forced_released_tensors=None, delay_offload=False
+):
+def fine_grained_offloading_group_flush_delayed_groups():
+def fine_grained_offloading_group_start(tensor, name=None):
+def fine_grained_offloading_forward_record(event: torch.cuda.Event) -> None:
+    """Record the forward event for cuda graph capture."""
+    d2h_stream = PipelineOffloadManager.get_instance().d2h_stream
+    torch.cuda.current_stream().record_event(event)
+    torch.cuda.current_stream().wait_stream(d2h_stream)
+class FineGrainedOffloadingBackwardRecordFunction(torch.autograd.Function):
+def fine_grained_offloading_backward_record(tensor, event: torch.cuda.Event) -> torch.Tensor:
+    """Record the backward event for cuda graph capture."""
+    return FineGrainedOffloadingBackwardRecordFunction.apply(tensor, event)
+class FineGrainedActivationOffloadingInterface:
+    """Interface for fine-grained activation offloading."""
+    def __init__(self, offload: bool, tensor: torch.Tensor, name: str):
+
+third_party/Megatron-LM/megatron/core/utils.py
+def null_decorator(*args, **kwargs):
+def experimental_fn(introduced_with_version: str):
+def experimental_cls(introduced_with_version: str):
+def get_torch_version():
+def get_te_version():
+def is_te_min_version(version, check_equality=True):
+def get_torch_version():
+def is_torch_min_version(version, check_equality=True):
+def get_fa_version():
+def is_fa_min_version(version, check_equality=True):
+def get_mamba_version():
+def is_mamba_min_version(version, check_equality=True):
+def get_causal_conv1d_version():
+def is_causal_conv1d_min_version(version, check_equality=True):
+def ensure_divisibility(numerator, denominator):
+def divide(numerator, denominator):
+def get_tensor_model_parallel_group_if_none(tp_group, is_expert=False, check_initialized=True):
+def get_pg_size(group=None):
+def get_pg_rank(group=None):
+def get_pg_src_rank(group=None):
+def get_attr_wrapped_model(model, attr, allow_none=True, return_model_obj=False):
+def get_model_type(model):
+def get_model_xattn(model):
+def get_model_config(model):
+def _kernel_make_viewless_tensor(inp, requires_grad):
+def make_viewless_tensor(inp, requires_grad, keep_graph):
+def assert_viewless_tensor(tensor, extra_msg=None):
+def safely_set_viewless_tensor_data(tensor, new_data_tensor):
+def init_method_normal(sigma):
+def scaled_init_method_normal(sigma, num_layers, multiplier=2.0):
+def log_on_each_pipeline_stage(
+    logger: logging.Logger,
+    *args: Any,
+    tp_group: Optional[torch.distributed.ProcessGroup] = None,
+    dp_cp_group: Optional[torch.distributed.ProcessGroup] = None,
+    **kwargs: Any,
+):
+def check_param_hashes_across_dp_replicas(
+    model: List[torch.nn.Module], cross_check: bool = False
+) -> bool:
+    """Computes hashes of all parameters in model, all-gathers hashes across DP replicas,
+    and then checks for equality between the locally-computed hashes and those of other ranks.
+    NOTE: This function computes SHA-1 hashes on the CPU and thus needs to move all param
+    tensors from GPU to CPU first; as a result, this function is not intended to be called
+    very frequently in the main training loop.
+    Args:
+        model (List[torch.nn.Module]):
+def make_tp_sharded_tensor_for_checkpoint(
+    tensor, key, tp_axis=0, replica_id=None, prepend_offsets=(), **kwargs
+):
+def make_sharded_tensor_for_checkpoint(tensor, key, prepend_offsets=(), replica_id=None, **kwargs):
+def get_full_tensor_if_necessary(tensor):
+def to_local_if_dtensor(tensor: Union[torch.Tensor, "DTensor"]) -> torch.Tensor:
+    """Returns the local shard of the given tensor if it is a DTensor."""
+    with torch.no_grad():
+def get_data_parallel_group_if_dtensor(
+    tensor: Union[torch.Tensor, "DTensor"], data_parallel_group: "ProcessGroup" = None
+) -> Optional["ProcessGroup"]:
+    """Gets the data parallel group of the given tensor if it is a DTensor."""
+    if HAVE_DTENSOR and isinstance(tensor, DTensor):
+def prepare_input_tensors_for_wgrad_compute(grad_output, all_gathered_input):
+def drain_embedding_wgrad_compute(
+    config, embedding_activation_buffer, grad_output_buffer, weight, tp_group
+):
+def local_multi_tensor_applier(op, noop_flag_buffer, tensor_lists, *args):
+def local_multi_tensor_l2_norm(chunk_size, noop_flag, tensor_lists, per_tensor, *args):
+def local_multi_tensor_scale(chunk_size, noop_flag, tensor_lists, scale):
+def is_submodule(module, parent_module, strict=True):
+def get_batch_on_this_cp_rank(
+    batch: Dict[str, Any], cp_group: Optional[torch.distributed.ProcessGroup] = None
+):
+def get_thd_batch_on_this_cp_rank(
+    batch: Dict[str, Any],
+    cu_seqlens: torch.Tensor,
+    cu_seqlens_padded: torch.Tensor,
+    max_seqlen: torch.Tensor,
+    cp_size: Optional[int] = None,
+    cp_rank: Optional[int] = None,
+):
+def get_batch_on_this_hybrid_cp_rank(
+    batch: Dict[str, Any],
+    local_cp_size: int,
+    cp_group: Optional[torch.distributed.ProcessGroup] = None,
+):
+def configure_nvtx_profiling(enabled: bool) -> None:
+    """Configure NVTX range profiling to be enabled or disabled.
+    Args:
+        enabled (bool):
+def _nvtx_range_get_func_path():
+def nvtx_range_push(msg=None, suffix=None) -> None:
+    """Push NVTX range onto stack. If msg is not provided, use the calling function's path.
+    Args:
+        msg (str, optional):
+def nvtx_range_pop(msg=None, suffix=None) -> None:
+    """Pop NVTX range from stack. If msg is not provided, use the calling function's path.
+    Args:
+        msg (str, optional):
+def _nvtx_decorator_get_func_path(func):
+def nvtx_decorator(message: Optional[str] = None, color: Optional[str] = None):
+def unwrap_model(model, module_instances=None):
+def get_asyncio_loop(loop: asyncio.AbstractEventLoop | None = None) -> asyncio.AbstractEventLoop:
+    """Creates an asyncio loop if necessary and then returns the current asyncio loop."""
+    global _ASYNC_IO_LOOP
+    if loop is None:
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError as e:
+            if _ASYNC_IO_LOOP is not None:
+                return _ASYNC_IO_LOOP
+            else:
+                _ASYNC_IO_LOOP = loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(loop)
+    return loop
+def is_using_quantization_scales(config):
+def trace_async_exceptions(func: Optional[Callable] = None, *, verbose: bool = False):
+def deprecated(
+    version: str,
+    removal_version: Optional[str] = None,
+    alternative: Optional[str] = None,
+    reason: Optional[str] = None,
+) -> Callable:
     """
-    Get the concentration factor (factor multiplied to the sine and cosine components of the
-    embedding). This factor is also known as attention factor, and sometimes homonymously known as
-    "mscale"
+    Mark a function as deprecated.
+    This decorator:
+    1. Adds deprecation metadata to the function
+    2. Issues a DeprecationWarning when the function is called
+    3. Allows the compatibility checker to track deprecation lifecycle
+    Args:
+        version: Version where deprecation starts (e.g., "1.0.0")
+        removal_version: Version where function will be removed (e.g., "2.0.0")
+        alternative: Name of the recommended replacement function
+        reason: Optional explanation for the deprecation
+    Returns:
+        Decorator function
+    Example:
+        @deprecated(
+            version="1.0.0",
+            removal_version="2.0.0",
+            alternative="new_train_model",
+            reason="Improved performance and cleaner API"
+        )
+        def old_train_model(config):
+def internal_api(func: Callable) -> Callable:
     """
-    if mscale is None or mscale_all_dim is None:
-        return _yarn_get_mscale(scaling_factor)
-    return float(
-        _yarn_get_mscale(scaling_factor, mscale) / _yarn_get_mscale(scaling_factor, mscale_all_dim)
-    )
-def _yarn_get_concentration_factor_from_config(config: TransformerConfig) -> float:
-    if hasattr(config, "yarn_rotary_scaling_factor"):
+    Mark a function or class as internal API (not for external use).
+    Use this decorator for:
+    - Internal APIs not intended for public consumption
+    - Experimental features that may change without notice
+    - Implementation details that are not part of the stable API
+    Objects marked with this decorator will be exempt from backward
+    compatibility checks.
+    Args:
+        func: The function or class to mark as internal
+    Returns:
+        The original function/class with an internal API marker
+    Example:
+        @internal_api
+        def _internal_helper():
+def experimental_api(func: Callable) -> Callable:
+    """
+    Mark a function or class as experimental API.
+    Use this decorator for:
+    - Experimental features that may change without notice
+    - New APIs under active development
+    - Features that are not yet stable
+    Objects marked with this decorator will be exempt from backward
+    compatibility checks, allowing rapid iteration during development.
+    Args:
+        func: The function or class to mark as experimental
+    Returns:
+        The original function/class with an experimental API marker
+    Example:
+        @experimental_api
+        def new_experimental_feature():
+def deprecate_args(
+    *deprecated_keys, message="Argument '{name}' has been deprecated and should not be used."
+):
+def deprecate_inference_params(inference_context, inference_params):
+
+third_party/Megatron-LM/megatron/core/datasets/utils.py
+def compile_helpers():
+def normalize(weights: List[float]) -> List[float]:
+    """Do non-exponentiated normalization
+    Args:
+        weights (List[float]):
+def get_blend_from_list(
+    blend: Optional[List[str]],
+) -> Optional[Tuple[List[str], Optional[List[float]]]]:
+    # pylint: disable=line-too-long
+    """Get the blended_megatron_dataset_config.BlendedMegatronDatasetConfig blend
+    from the blend list
+    Args:
+        blend (Optional[List[str]]):
+
+third_party/Megatron-LM/megatron/core/datasets/blended_megatron_dataset_config.py
+def parse_and_normalize_split(split: str) -> List[float]:
+    """Parse the dataset split ratios from a string
+    Args:
+        split (str):
+def convert_split_vector_to_split_matrix(
+    vector_a: List[float], vector_b: Optional[List[float]] = None
+) -> List[Optional[Tuple[float, float]]]:
+    """Build the split matrix from one or optionally two contributing split vectors.
+    Ex. a standard conversion:
+    [0.99, 0.01, 0.0] -> [(0, 0.99), (0.99, 1.0), None]
+    [0.99, 0.01, 0.0], [0.98, 0.02, 0.0] -> [(0, 0.98), (0.99, 1.0), None]
+    Args:
+        vector_a (List[float]):
+
+third_party/Megatron-LM/megatron/core/fusions/fused_bias_geglu.py
+def geglu(y):
+def bias_geglu(bias, y):
+def geglu_back(g, y):
+def bias_geglu_back(g, y, bias):
+def bias_geglu_impl(input, bias):
+def quick_gelu(y: torch.Tensor) -> torch.Tensor:
+    """Sigmoid approximation of gelu"""
+    return y * torch.sigmoid(1.702 * y)
+@jit_fuser
+def quick_geglu(y: torch.Tensor, linear_offset: float = 0.0) -> torch.Tensor:
+    """Performs Quick-GELU-based GEGLU activation : quick_gelu(y1) * (y2 + offset).
+    Args:
+        y: Input tensor split into two halves on the last dimension.
+        linear_offset: Optional linear offset added to the second half before gating.
+    Returns:
+        Tensor after applying the GEGLU activation.
+    """
+    y_1, y_2 = torch.chunk(y, 2, dim=-1)
+    return quick_gelu(y_1) * (y_2 + linear_offset)
+@jit_fuser
+def weighted_quick_geglu(
+    y: torch.Tensor, weights: torch.Tensor, linear_offset: float = 0.0
+) -> torch.Tensor:
+    """Token-wise-weighted Quick-GEGLU activation.
+    The weights tensor is expected to have the same first-dimension length as ``y`` and a trailing
+    singleton dimension so that it broadcasts over the feature dimension.
+    """
+    dtype = y.dtype
+    res = quick_geglu(y, linear_offset) * weights
+    return res.to(dtype)
+# gradient of sigmoid approximation of gelu
+@jit_fuser
+def quick_geglu_back(g, y, linear_offset: float = 0.0) -> torch.Tensor:
+    """Backward helper for Quick-GEGLU.
+    Args:
+        g (torch.Tensor):
+def weighted_quick_geglu_back(g, y, weights, linear_offset: float = 0.0):
+def weighted_bias_quick_geglu(
+    y: torch.Tensor, bias: torch.Tensor, weights: torch.Tensor, linear_offset: float = 0.0
+) -> torch.Tensor:
+    """Token-wise weighted Quick-GEGLU activation with bias.
+    Args:
+        y: Input tensor before bias addition.
+        bias: Bias tensor broadcastable to `y`.
+        weights: Weight tensor with shape `[tokens, 1]` broadcasting over feature dim.
+        linear_offset: Optional linear offset for the second half before gating.
+    Returns:
+        Activated tensor with same dtype as `y`.
+    """
+    dtype = y.dtype
+    res = quick_geglu(y + bias, linear_offset) * weights
+    return res.to(dtype)
+@jit_fuser
+def weighted_bias_quick_geglu_back(g, y, bias, weights, linear_offset: float = 0.0):
+def weighted_bias_quick_geglu_impl(
+    input, bias, weights, fp8_input_store=False, linear_offset=0.0, clamp_value=None
+):
+
+third_party/Megatron-LM/megatron/core/models/multimodal/context_parallel.py
+def get_padding(
+    seq_len,
+    cp_size,
+    tp_size,
+    has_sp,
+    decoder_tp_comm_overlap=False,
+    decoder_seq_len=None,
+    fp8_enabled=False,
+    fp8_recipe=None,
+):
+def get_packed_seq_params(tokens, img_seq_len, padding_needed, cp_size, use_packed_sequence=False):
+
+third_party/Megatron-LM/megatron/core/tensor_parallel/mappings.py
+def _reduce(input_, group):
+def _split_along_last_dim(input_, group):
+def _split_along_first_dim(input_, group):
+def _gather_along_last_dim(input_, group):
+def _reduce_scatter_along_last_dim(input_, group):
+def _gather_along_first_dim(input_, group, output_split_sizes=None, use_global_buffer=False):
+def _reduce_scatter_along_first_dim(input_, group, input_split_sizes=None, use_global_buffer=False):
+def copy_to_tensor_model_parallel_region(input_, group=None):
+def reduce_from_tensor_model_parallel_region(input_, group=None):
+def scatter_to_tensor_model_parallel_region(input_, group=None):
+def gather_from_tensor_model_parallel_region(input_, group=None):
+def scatter_to_sequence_parallel_region(input_, group=None):
+def gather_from_sequence_parallel_region(
+    input_,
+    tensor_parallel_output_grad=True,
+    group=None,
+    output_split_sizes=None,
+    use_global_buffer=False,
+):
+def reduce_scatter_to_sequence_parallel_region(
+    input_, group=None, input_split_sizes=None, use_global_buffer=False
+):
+def all_gather_last_dim_from_tensor_parallel_region(input_, group=None):
+def reduce_scatter_last_dim_to_tensor_parallel_region(input_, group=None):
+def all_to_all(group, input_, output_split_sizes_=None, input_split_sizes=None):
+def all_to_all_sp2hp(input_, group=None):
+def all_to_all_hp2sp(input_, group=None):
+
+third_party/Megatron-LM/megatron/core/fusions/fused_pad_routing_map.py
+def _pad_routing_map_kernel(
+    routing_map_ptr, output_ptr, num_tokens, pad_multiple: tl.constexpr, BLOCK_SIZE: tl.constexpr
+):
+def fused_pad_routing_map(routing_map: torch.Tensor, pad_multiple: int) -> torch.Tensor:
+    """Fused version of pad_routing_map.
+    Args:
+        routing_map (torch.Tensor):
+
+third_party/Megatron-LM/megatron/core/datasets/blended_megatron_dataset_builder.py
+def _get_size_per_split_per_dataset(
+    normalized_weights: List[float], target_size_per_split: List[int], surplus: float = 0.0
+) -> List[List[int]]:
+    """Determine the contribution of the MegatronDataset splits to the BlendedDataset splits
+    Args:
+        normalized_weights (List[float]):
 
 third_party/Megatron-LM/megatron/core/distributed/fsdp/src/megatron_fsdp/mixed_precision.py
 def is_te_min_version(vers, check_equality=True):
@@ -1105,634 +1927,10 @@ def _fp8_quantize_fallback(
     for model_param, main_param, start_offset, fsdp_shard_model_param in zip(
         model_params, main_params, start_offsets, fsdp_shard_model_params
     ):
+def get_quantized_model_init_context_cls():
 
-third_party/Megatron-LM/megatron/core/post_training/modelopt/gpt/state_dict_hooks.py
-def mcore_gpt_load_te_state_dict_pre_hook(
-    state_dict, prefix, local_metadata, strict, missing_keys, unexpected_keys, error_msgs
-):
-
-third_party/Megatron-LM/megatron/core/export/trtllm/trtllm_layers.py
-def get_layer_name_without_prefix(layer: TRTLLMLayers) -> str:
-    """Get TRTLayer name without prefix
-    Given a layer e.g TRTLLMLayers.attention_qkv_weight it returns 'attention.qkv.weight'
-    Args:
-        layer (TRTLLMLayers):
-
-third_party/Megatron-LM/megatron/core/pipeline_parallel/utils.py
-def is_pp_first_stage(pp_group: torch.distributed.ProcessGroup):
-def is_pp_last_stage(pp_group: torch.distributed.ProcessGroup):
-def is_vp_first_stage(vp_stage: int, vp_size: int | None):
-def is_vp_last_stage(vp_stage: int, vp_size: int | None):
-def get_pp_first_rank(pp_group: torch.distributed.ProcessGroup):
-def get_pp_last_rank(pp_group: torch.distributed.ProcessGroup):
-def get_pp_next_rank(pp_group: torch.distributed.ProcessGroup):
-def get_pp_prev_rank(pp_group: torch.distributed.ProcessGroup):
-def make_viewless(e):
-def set_ideal_affinity_for_current_gpu():
-def stream_acquire_context(stream, event):
-def set_streams(comp_stream=None, comm_stream=None):
-def get_comp_stream():
-def get_comm_stream():
-
-third_party/Megatron-LM/megatron/core/models/bert/bert_model.py
-def get_te_version():
-
-third_party/Megatron-LM/megatron/core/distributed/param_and_grad_buffer.py
-def shard_buffer(buffer: torch.Tensor, data_parallel_world_size: int):
-def partition_buckets(
-    buffers: List[_ParamAndGradBuffer], force_single_bucket_group: bool = False
-) -> List[_ParamAndGradBucketGroup]:
-    """
-    Automatically regroup the buckets of input buffers and return a list of bucket groups.
-    In some scenarios, we need to put buckets from different buffers into a group so that their
-    communication can be aggregated.
-    For example, when there are both fp8 weights and bf16 biases in the model and virtual
-    pipeline parallelism is enabled, each model chunk will have an fp8 bucket and a bf16 bucket,
-    which doubles the number of communication kernels, and because of the use of
-    CUDA_DEVICE_MAX_CONNECTIONS=1, having multiple back-to-back communications will prevent the
-    overlap of communication kernels with computation kernels.
-    The grouping strategy is:
-    1. If force_single_bucket_group is True, put all buckets across all buffers into a single
-       bucket group.
-    2. If force_single_bucket_group is False, when there is no fp8 buffer in the input buffers,
-       let each bucket group have only one bucket.
-    3. If force_single_bucket_group is False, when using fp8 params, merge all non-fp8 buckets
-       into the last fp8 bucket group.
-       - Since the non-fp8 parameters (typically the biases of various layers) are relatively
-         small, they are likely to be grouped into a single non-fp8 bucket.
-       - The fp8 buckets start from the end of the model, i.e., the first bucket corresponds to
-         the end of the model, while the last bucket corresponds to the beginning.
-       - If we combine the non-fp8 bucket with the first fp8 bucket, we cannot initiate the
-         reduce-scatter to synchronize gradients after the backward pass at the end of the model
-         has completed. This is because we need to wait for the non-fp8 params from the beginning
-         layers to obtain their gradients.
-       - Combining the non-fp8 bucket with the last fp8 bucket can help avoid this issue.
-    Args:
-        buffers (list):
-
-third_party/Megatron-LM/megatron/core/post_training/modelopt/gpt/model_specs.py
-def get_gpt_modelopt_spec(
-    config: TransformerConfig,
-    local_core_attention: bool = False,
-    remap_te_layernorm: bool = False,
-    real_quant_cfg: str = "None",
-    qk_l2_norm: bool = False,
-    use_arbitrary_attention_mask: bool = False,
-):
-
-third_party/Megatron-LM/megatron/core/models/bert/bert_layer_specs.py
-def get_bert_layer_with_transformer_engine_spec():
-def __getattr__(name):
-
-third_party/Megatron-LM/megatron/core/tensor_parallel/mappings.py
-def _reduce(input_, group):
-def _split_along_last_dim(input_, group):
-def _split_along_first_dim(input_, group):
-def _gather_along_last_dim(input_, group):
-def _reduce_scatter_along_last_dim(input_, group):
-def _gather_along_first_dim(input_, group, output_split_sizes=None, use_global_buffer=False):
-def _reduce_scatter_along_first_dim(input_, group, input_split_sizes=None, use_global_buffer=False):
-def copy_to_tensor_model_parallel_region(input_, group=None):
-def reduce_from_tensor_model_parallel_region(input_, group=None):
-def scatter_to_tensor_model_parallel_region(input_, group=None):
-def gather_from_tensor_model_parallel_region(input_, group=None):
-def scatter_to_sequence_parallel_region(input_, group=None):
-def gather_from_sequence_parallel_region(
-    input_,
-    tensor_parallel_output_grad=True,
-    group=None,
-    output_split_sizes=None,
-    use_global_buffer=False,
-):
-def reduce_scatter_to_sequence_parallel_region(
-    input_, group=None, input_split_sizes=None, use_global_buffer=False
-):
-def all_gather_last_dim_from_tensor_parallel_region(input_, group=None):
-def reduce_scatter_last_dim_to_tensor_parallel_region(input_, group=None):
-def all_to_all(group, input_, output_split_sizes_=None, input_split_sizes=None):
-def all_to_all_sp2hp(input_, group=None):
-def all_to_all_hp2sp(input_, group=None):
-
-third_party/Megatron-LM/megatron/core/dist_checkpointing/strategies/filesystem_async.py
-def _get_write_results_queue():
-def _split_by_size_and_type(bins: int, items: List[WriteItem]) -> List[List[WriteItem]]:
-    """
-    Splits write items according to item size into close to uniform bins.
-    Same as torch.distributed.checkpoint.filesystem._split_by_size_and_type,
-    but with a fixed _item_size function.
-    Args:
-        bins (int):
-def _split_by_separation_hint(
-    buckets: List[List[WriteItem]], separation_hint: Optional[str] = None
-) -> Dict[str, List[List[WriteItem]]]:
-    """
-    Splits buckets into those whose keys begin with the separation_hint and those whose keys do not
-    Args:
-        buckets (List[List[WriteItem]]):
-def _item_size(item: WriteItem) -> int:
-    """
-    Calculates size (in bytes) of a single write item.
-    Same as torch.distributed.checkpoint.filesystem._item_size,
-    but fixes computing chunk size (with item.tensor_data.chunk.sizes)
-    Args:
-        item (WriteItem):
-def _process_memory() -> int:
-    """
-    Get memory used by current process.
-    Returns (int):
-
-third_party/Megatron-LM/megatron/core/pipeline_parallel/combined_1f1b.py
-def combined_1f1b_schedule_for_no_pipelining(
-    forward_step_func,
-    data_iterator,
-    model,
-    num_microbatches,
-    input_tensor,
-    output_tensor_grad,
-    forward_data_store,
-    config,
-    collect_non_loss_data,
-    first_val_step,
-    forward_only,
-    no_sync_func,
-    total_num_tokens,
-    check_first_val_step,
-):
-def combined_1f1b_schedule_for_interleaved_pipelining(
-    config,
-    forward_step_func,
-    data_iterator,
-    model,
-    num_microbatches,
-    forward_data_store,
-    forward_step_helper_preprocess,
-    forward_step_helper_postprocess,
-    backward_step_helper_preprocess,
-    backward_step_helper_postprocess,
-    get_microbatch_id_in_model_chunk,
-    get_model_chunk_id,
-    check_first_val_step,
-    is_first_microbatch_for_model_chunk,
-    collect_non_loss_data,
-    f_virtual_microbatch_id=None,
-    b_virtual_microbatch_id=None,
-    pre_forward=None,
-    pre_backward=None,
-    post_forward=None,
-    post_backward=None,
-):
-def combined_forward_backward_step(
-    forward_step_func,
-    data_iterator,
-    f_model,
-    num_microbatches,
-    input_tensor,
-    forward_data_store,
-    b_model,
-    b_input_tensor,
-    b_output_tensor,
-    b_output_tensor_grad,
-    config,
-    f_model_chunk_id=None,
-    pre_forward=None,
-    pre_backward=None,
-    post_forward=None,
-    post_backward=None,
-    collect_non_loss_data=False,
-    checkpoint_activations_microbatch=None,
-    is_first_microbatch=False,
-    current_microbatch=None,
-    encoder_decoder_xattn=False,
-):
-
-third_party/Megatron-LM/megatron/core/jit.py
-def noop_decorator(func):
-def enable_jit_fuser():
-def disable_jit_fuser():
-
-third_party/Megatron-LM/megatron/core/num_microbatches_calculator.py
-def get_num_microbatches() -> int:
-    """Get number of microbatches."""
-    return _GLOBAL_NUM_MICROBATCHES_CALCULATOR.get()
-def get_current_global_batch_size() -> int:
-    """Get current global batch size."""
-    return _GLOBAL_NUM_MICROBATCHES_CALCULATOR.get_current_global_batch_size()
-def get_micro_batch_size() -> int:
-    """Get micro batch size."""
-    return _GLOBAL_NUM_MICROBATCHES_CALCULATOR.get_micro_batch_size()
-def get_current_running_global_batch_size() -> int:
-    """Get current running global batch size, taking into account number of DP replicas might be
-    incompatible with true global batch size if `decrease_batch_size_if_needed` is True."""
-    return _GLOBAL_NUM_MICROBATCHES_CALCULATOR.get_current_running_global_batch_size()
-def update_num_microbatches(
-    consumed_samples: int, consistency_check: bool = True, verbose: bool = False
-) -> None:
-    """Update number of microbatches.
-    Args:
-        consumed_samples (int):
-def unset_num_microbatches_calculator():
-def init_num_microbatches_calculator(
-    rank: int,
-    rampup_batch_size: Optional[List[int]],
-    global_batch_size: int,
-    micro_batch_size: int,
-    data_parallel_size: int,
-    decrease_batch_size_if_needed: bool = False,
-) -> None:
-    """Initialize number of microbatches calculator. Supporting backward compatibility.
-    Args:
-        rank (int):
-def destroy_num_microbatches_calculator():
-def reconfigure_num_microbatches_calculator(
-    rank: int,
-    rampup_batch_size: Optional[List[int]],
-    global_batch_size: int,
-    micro_batch_size: int,
-    data_parallel_size: int,
-    decrease_batch_size_if_needed: bool = False,
-) -> None:
-    """Reconfigure number of microbatches calculator. Supporting backward compatibility.
-    Args:
-        rank (int):
-def _configure_global_num_microbatches_calculator(
-    rank: int,
-    rampup_batch_size: Optional[List[int]],
-    global_batch_size: int,
-    micro_batch_size: int,
-    data_parallel_size: int,
-    decrease_batch_size_if_needed: bool = False,
-    init: bool = False,
-) -> None:
-    """Configure number of microbatches calculator. Can be used for initialization and
-    reconfiguration.
-    Args:
-        rank (int):
-def _build_num_microbatches_calculator(
-    rank: int,
-    rampup_batch_size: Optional[List[int]],
-    global_batch_size: int,
-    micro_batch_size: int,
-    data_parallel_size: int,
-    decrease_batch_size_if_needed: bool,
-) -> Union['ConstantNumMicroBatchesCalculator', 'RampupBatchsizeNumMicroBatchesCalculator']:
-    """Build number of microbatches calculator. Internal helper method.
-    Args:
-        rank (int):
-def _round(batch_size: int, divisor: int) -> int:
-    """Round `batch_size` down to nearest batch size divisible by `divisor`."""
-    return (batch_size // divisor) * divisor
-class NumMicroBatchesCalculator(ABC):
-
-third_party/Megatron-LM/megatron/core/models/vision/radio.py
-def fp8_pad_hook(
-    module, state_dict, prefix, local_metadata, strict, missing_keys, unexpected_keys, error_msgs
-):
-
-third_party/Megatron-LM/megatron/core/extensions/transformer_engine.py
-def _get_fp8_autocast_for_quant_recipe(qrecipe: TEQuantizationRecipe):
-def _get_fp8_autocast_for_quant_params(qparams: TEQuantizationParams | None, training: bool):
-def _get_should_context_be_quantized_recipe(
-    qrecipe: TEQuantizationRecipe, is_original_context_quantized: bool
-):
-def _get_should_context_be_quantized_params(
-    qparams: TEQuantizationParams | None, training: bool, is_context_quantized: bool
-):
-def _get_extra_te_kwargs(config: TransformerConfig):
-def condition_init_method(config, init_method):
-def split_te_layernorm_column_parallel_linear(
-    fused_layer,
-    config,
-    init_method: Optional[callable] = None,
-    tp_group: Optional[torch.distributed.ProcessGroup] = None,
-):
-def te_checkpoint(
-    forward_func, distribute_saved_activations, get_rng_state_tracker, tp_group, *args, **kwargs
-):
-def set_save_original_input(module):
-
-third_party/Megatron-LM/megatron/core/models/T5/t5_model.py
-def t5_extended_attention_mask(attention_mask_list: List[Tensor]) -> List[Tensor]:
-    """Creates the extended attention mask
-    Converts the attention mask of dimension [batch size, seq_len, seq_len]
-    to [batch size, 1, seq_len, seq_len]
-    Args:
-        attention_mask (Tensor):
-def t5_position_ids(token_ids: Tensor) -> Tensor:
-    """Calculate position ids from token ids
-    Args:
-        token_ids (Tensor):
-
-third_party/Megatron-LM/megatron/core/distributed/fsdp/src/megatron_fsdp/megatron_fsdp.py
-def _replace_module_parameter(module, name, new_param):
-
-third_party/Megatron-LM/megatron/core/models/retro/decoder_spec.py
-def get_retro_decoder_layer_te_spec(
-    encoder_block_spec: typing.Union[ModuleSpec, TransformerBlockSubmodules, None] = None
-) -> ModuleSpec:
-    """Retro decoder TE spec (uses Transformer Engine components).
-    A Retro decoder layer uses custom attention and bias-dropout-add operators
-    to perform chunked-cross attention. Additionally, the first Retro decoder
-    layer instantiates an entire encoder transformer block. As such, the decoder
-    cross attention module takes an optional encoder block spec, which is only
-    provided for the first Retro decoder layer.
-    Args:
-        encoder_block_spec (ModuleSpec):
-def get_retro_decoder_layer_local_spec(
-    encoder_block_spec: typing.Optional[ModuleSpec] = None,
-) -> ModuleSpec:
-    """Retro decoder local spec (uses Megatron-Core components).
-    A Retro decoder layer uses custom attention and bias-dropout-add operators
-    to perform chunked-cross attention. Additionally, the first Retro decoder
-    layer instantiates an entire encoder transformer block. As such, the decoder
-    cross attention module takes an optional encoder block spec, which is only
-    provided for the first Retro decoder layer.
-    Args:
-        encoder_block_spec (ModuleSpec):
-def get_retro_decoder_block_spec(
-    config: RetroConfig,
-    use_transformer_engine: bool,
-    vp_stage: Optional[int] = None,
-    pp_rank: Optional[int] = None,
-) -> TransformerBlockSubmodules:
-    """Retro decoder block spec.
-    Retro decoder block implementation details:
-    - The retro decoder block consists of interleaved GPT layers
-        and customized Retro decoder layers.
-    - The Retro decoder layers are spaced three layers apart,
-        and start on layer 6 or 9 (depending on the total number of layers).
-    - The first decoder layer instantiates an encoder block,
-        and it therefore passes in an encoder_block_spec.
-    Args:
-        config (RetroConfig):
-
-third_party/Megatron-LM/megatron/core/models/vision/clip_vit_model.py
-def get_num_image_embeddings(
-    img_h,
-    img_w,
-    patch_dim,
-    vision_model_type,
-    disable_vision_class_token,
-    class_token_len,
-    pixel_shuffle,
-    use_tile_tags=False,
-    max_num_tiles=0,
-    tokenizer_type=None,
-):
-
-third_party/Megatron-LM/megatron/core/extensions/kitchen.py
-def _get_extra_kitchen_kwargs(config: TransformerConfig):
-
-third_party/Megatron-LM/megatron/core/models/retro/utils.py
-def get_config_path(project_dir: str) -> str:
-    """Config copy stored within retro project dir."""
-    return os.path.join(project_dir, "config.json")
-def get_gpt_data_dir(project_dir: str) -> str:
-    """Get project-relative directory of GPT bin/idx datasets."""
-    return os.path.join(project_dir, "data")
-# ** Note ** : Retro's compatibility between cross attention and Flash/Fused
-#   Attention is currently a work in progress. We default to returning None for
-#   now.
-# def get_all_true_mask(size, device):
-def get_all_true_mask(size, device):
-
-third_party/Megatron-LM/megatron/core/models/huggingface/module.py
-def get_hf_model_type(model_path):
-def build_hf_model(config, model_path):
-
-third_party/Megatron-LM/megatron/core/distributed/reduce_scatter_with_fp32_accumulation.py
-def reduce_scatter_with_fp32_accumulation(
-    output_tensor: torch.Tensor,
-    input_tensor: torch.Tensor,
-    op: torch.distributed.ReduceOp,
-    group: torch.distributed.ProcessGroup,
-    async_op: bool,
-):
-
-third_party/Megatron-LM/megatron/core/transformer/multi_token_prediction.py
-def tie_word_embeddings_state_dict(
-    sharded_state_dict: ShardedStateDict,
-    word_emb_weight: Tensor,
-    word_emb_weight_key: str,
-    tp_group: torch.distributed.ProcessGroup,
-    dp_cp_group: torch.distributed.ProcessGroup,
-) -> None:
-    """tie the embedding of the mtp processing stage in a given sharded state dict.
-    Args:
-        sharded_state_dict (ShardedStateDict):
-def tie_output_layer_state_dict(
-    sharded_state_dict: ShardedStateDict,
-    output_layer_weight: Tensor,
-    output_layer_weight_key: str,
-    tp_group: torch.distributed.ProcessGroup,
-    dp_cp_group: torch.distributed.ProcessGroup,
-) -> None:
-    """tie the output layer of the mtp processing stage in a given sharded state dict.
-    Args:
-        sharded_state_dict (ShardedStateDict):
-def roll_tensor(tensor, shifts=-1, dims=-1, cp_group=None, packed_seq_params=None):
-def _roll_tensor_packed_seq(tensor, shifts, dims, packed_seq_params, cp_group=None):
-def get_mtp_layer_spec(
-    transformer_layer_spec: ModuleSpec, use_transformer_engine: bool
-) -> ModuleSpec:
-    """Get the MTP layer spec.
-    Returns:
-        ModuleSpec: Module specification with TE modules
-    """
-    return get_mtp_layer_spec_for_backend(
-        transformer_layer_spec,
-        backend=TESpecProvider() if use_transformer_engine else LocalSpecProvider(),
-    )
-def get_mtp_layer_spec_for_backend(
-    transformer_layer_spec: ModuleSpec, backend: BackendSpecProvider
-) -> ModuleSpec:
-    """Get the MTP layer spec.
-    Returns:
-        ModuleSpec: Module specification with modules from the backend.
-    """
-    column_parallel_linear_impl: type = backend.column_parallel_linear()
-    layer_norm_impl: type = backend.layer_norm()
-    mtp_layer_spec = ModuleSpec(
-        module=MultiTokenPredictionLayer,
-        submodules=MultiTokenPredictionLayerSubmodules(
-            enorm=layer_norm_impl,
-            hnorm=layer_norm_impl,
-            eh_proj=column_parallel_linear_impl,
-            transformer_layer=transformer_layer_spec,
-            layer_norm=layer_norm_impl,
-        ),
-    )
-    return mtp_layer_spec
-def mtp_on_this_rank(
-    config: TransformerConfig, ignore_virtual: Optional[bool] = True, vp_stage: Optional[int] = None
-) -> bool:
-    """
-    Check if there is MTP on the current rank.
-    Behavior:
-        - If a custom pipeline model parallel layout is provided in the config:
-            - If virtual pipeline parallelism is enabled (and `ignore_virtual` is False), checks
-              whether any MTP layers are present on this (pp_rank, vp_stage) pair.
-            - Otherwise, checks all virtual pipeline ranks of the current pipeline rank. Returns
-              True if any virtual sub-rank includes at least one MTP layer.
-        - If no custom layout is provided, assumes all MTP layers (if any) are placed on the last
-          pipeline stage. The function returns True only on the last pipeline stage.
-    """
-    mtp_on_this_rank = False
-    pp_rank = parallel_state.get_pipeline_model_parallel_rank()
-    if config.pipeline_model_parallel_layout is not None:
-        # with custom PP layout, we support put MTP layers on any pipeline stage
-        layout = config.pipeline_model_parallel_layout.layout
-        if (
-            not ignore_virtual
-            and parallel_state.get_virtual_pipeline_model_parallel_world_size() is not None
-        ):
-def get_mtp_ranks(pp_ranks: List[int], config: TransformerConfig) -> List[int]:
-    """Get the ranks of the MTP layers."""
-    mtp_ranks = set()
-    if config.mtp_num_layers is None:
-        return []
-    if config.pipeline_model_parallel_layout is None:
-        return [pp_ranks[-1]]
-    layout = config.pipeline_model_parallel_layout.layout
-    for pp_rank in range(len(layout)):
-def get_mtp_layer_offset(config: TransformerConfig, vp_stage: Optional[int] = None) -> int:
-    """Get the offset of the MTP layer."""
-    if config.pipeline_model_parallel_size > 1:
-        if config.pipeline_model_parallel_layout:
-            offset = config.pipeline_model_parallel_layout.get_layer_offset(
-                layer_type=LayerType.mtp, vp_stage=vp_stage
-            )
-        else:
-            offset = 0
-    else:
-        offset = 0
-    return offset
-def get_mtp_num_layers_to_build(
-    config: TransformerConfig, vp_stage: Optional[int] = None, pp_rank: Optional[int] = None
-) -> int:
-    """Get the number of MTP layers to build."""
-    if config.pipeline_model_parallel_layout is not None:
-        # If we have a custom PP layout, get the number of mtp layers in the layout array.
-        num_layers_to_build = config.pipeline_model_parallel_layout.get_num_layers_to_build(
-            layer_type=LayerType.mtp, vp_stage=vp_stage
-        )
-        assert num_layers_to_build == config.mtp_num_layers or num_layers_to_build == 0, (
-            f"Currently, we only support put all of MTP layers on the last pipeline stage, "
-            f"so the number of MTP layers to build ({num_layers_to_build}) must match "
-            f"mtp_num_layers ({config.mtp_num_layers}) or be 0."
-        )
-    else:
-        if parallel_state.is_pipeline_last_stage(ignore_virtual=False, vp_stage=vp_stage):
-def _get_mtp_block_submodules(
-    config: TransformerConfig, spec: Union[MultiTokenPredictionBlockSubmodules, ModuleSpec]
-) -> MultiTokenPredictionBlockSubmodules:
-    """
-    Retrieve or construct MultiTokenPredictionBlockSubmodules based on the provided specification.
-    Args:
-        config (TransformerConfig):
-
-third_party/Megatron-LM/megatron/core/pipeline_parallel/schedules.py
-def get_forward_backward_func(pp_size: Optional[int] = None, vp_size: Optional[int] = None):
-def deallocate_output_tensor(out, deallocate_pipeline_outputs=False):
-def custom_backward(output, grad_output):
-def set_current_microbatch(model, microbatch_id):
-def forward_step_calc_loss(
-    model,
-    output_tensor,
-    loss_func,
-    config,
-    vp_stage,
-    collect_non_loss_data,
-    num_microbatches,
-    forward_data_store,
-    cp_group_size=None,
-    is_last_stage=None,
-):
-def forward_step(
-    forward_step_func,
-    data_iterator,
-    model,
-    num_microbatches,
-    input_tensor,
-    forward_data_store,
-    config,
-    cp_group_size,
-    collect_non_loss_data=False,
-    checkpoint_activations_microbatch=None,
-    is_first_microbatch=False,
-    current_microbatch=None,
-    vp_stage=None,
-    is_last_stage=True,
-):
-def backward_step(input_tensor, output_tensor, output_tensor_grad, model_type, config):
-def check_first_val_step(first_val_step, forward_only, cond):
-def forward_backward_no_pipelining(
-    *,
-    forward_step_func,
-    data_iterator: Union[Iterator, List[Iterator]],
-    model: Union[torch.nn.Module, List[torch.nn.Module]],
-    num_microbatches: int,
-    seq_length: int,  # unused
-    micro_batch_size: int,  # unused
-    decoder_seq_length: Optional[int] = None,  # unused
-    forward_only: bool = False,
-    collect_non_loss_data: bool = False,
-    first_val_step: Optional[bool] = None,
-    adjust_tensor_shapes_fn: Optional[Callable] = None,  # unused
-    p2p_communicator: Optional[P2PCommunicator] = None,  # unused
-    pg_collection: Optional[ProcessGroupCollection] = None,
-):
-def clear_embedding_activation_buffer(config, model, is_last_stage):
-def finish_embedding_wgrad_compute(config, embedding_module, is_last_stage, tp_group):
-def get_pp_rank_microbatches(
-    num_microbatches,
-    num_model_chunks,
-    microbatch_group_size_per_vp_stage,
-    forward_only=False,
-    overlap_moe_expert_parallel_comm=False,
-    p2p_communicator: Optional[P2PCommunicator] = None,
-):
-def get_schedule_table(num_microbatches, num_model_chunks, microbatch_group_size_per_vp_stage):
-def forward_backward_pipelining_with_interleaving(
-    *,
-    forward_step_func,
-    data_iterator: Union[Iterator, List[Iterator]],
-    model: Union[torch.nn.Module, List[torch.nn.Module]],
-    num_microbatches: int,
-    seq_length: int,
-    micro_batch_size: int,
-    decoder_seq_length: Optional[int] = None,
-    forward_only: bool = False,
-    collect_non_loss_data: bool = False,
-    first_val_step: Optional[bool] = None,
-    adjust_tensor_shapes_fn: Optional[Callable] = None,  # unused
-    p2p_communicator: Optional[P2PCommunicator] = None,
-    pg_collection: Optional[ProcessGroupCollection] = None,
-):
-def get_tensor_shapes(
-    *,
-    seq_length: int,
-    micro_batch_size: int,
-    decoder_seq_length: int,
-    config,
-    tp_group: torch.distributed.ProcessGroup,
-    cp_group: torch.distributed.ProcessGroup,
-):
-def forward_backward_pipelining_without_interleaving(
-    *,
-    forward_step_func,
-    data_iterator: Union[Iterator, List[Iterator]],
-    model: Union[torch.nn.Module, List[torch.nn.Module]],
-    num_microbatches: int,
-    seq_length: int,
-    micro_batch_size: int,
-    decoder_seq_length: Optional[int] = None,
-    forward_only: bool = False,
-    collect_non_loss_data: bool = False,
-    first_val_step: Optional[bool] = None,
-    adjust_tensor_shapes_fn: Optional[Callable] = None,
-    p2p_communicator: Optional[P2PCommunicator] = None,
-    pg_collection: Optional[ProcessGroupCollection] = None,
-):
+third_party/Megatron-LM/megatron/core/tensor_parallel/cross_entropy.py
+def vocab_parallel_cross_entropy(vocab_parallel_logits, target, label_smoothing=0.0):
 
 third_party/Megatron-LM/megatron/core/dist_checkpointing/strategies/torch.py
 def register_default_torch_strategies():
@@ -1806,213 +2004,134 @@ def _get_filesystem_reader(
 ) -> FileSystemReader:
     if MultiStorageClientFeature.is_enabled():
 
-third_party/Megatron-LM/megatron/core/models/multimodal/context_parallel.py
-def get_padding(
-    seq_len,
-    cp_size,
-    tp_size,
-    has_sp,
-    decoder_tp_comm_overlap=False,
-    decoder_seq_len=None,
-    fp8_enabled=False,
-    fp8_recipe=None,
+third_party/Megatron-LM/megatron/core/inference/text_generation_server/dynamic_text_gen_server/endpoints/common.py
+def send_do_generate():
+
+third_party/Megatron-LM/megatron/core/fusions/fused_indices_converter.py
+def _indices_to_multihot_kernel(
+    indices_ptr,
+    probs_in_indices_ptr,
+    multihot_indices_ptr,  # bool
+    probs_in_multihot_ptr,
+    position_map_ptr,
+    num_of_local_experts: tl.constexpr,
+    num_of_local_experts_next_power_of_2: tl.constexpr,
+    topk: tl.constexpr,
+    topk_next_power_of_2: tl.constexpr,
+    BLOCK_SIZE: tl.constexpr,
 ):
-def get_packed_seq_params(tokens, img_seq_len, padding_needed, cp_size, use_packed_sequence=False):
-
-third_party/Megatron-LM/megatron/core/pipeline_parallel/fine_grained_activation_offload.py
-def debug_rank(message):
-def print_offload_summary_table(total_offload_bytes: Dict[str, int]):
-def fine_grained_offloading_disable_offload():
-def fine_grained_offloading_enable_offload():
-def fine_grained_offloading_group_commit(
-    tensor, name, forced_released_tensors=None, delay_offload=False
+def _multihot_to_indices_kernel(
+    probs_in_multihot_ptr,
+    position_map_ptr,
+    probs_indices_ptr,
+    num_of_local_experts: tl.constexpr,
+    num_of_local_experts_next_power_of_2: tl.constexpr,
+    topk: tl.constexpr,
+    topk_next_power_of_2: tl.constexpr,
+    BLOCK_SIZE: tl.constexpr,
 ):
-def fine_grained_offloading_group_flush_delayed_groups():
-def fine_grained_offloading_group_start(tensor, name=None):
-def fine_grained_offloading_forward_record(event: torch.cuda.Event) -> None:
-    """Record the forward event for cuda graph capture."""
-    d2h_stream = PipelineOffloadManager.get_instance().d2h_stream
-    torch.cuda.current_stream().record_event(event)
-    torch.cuda.current_stream().wait_stream(d2h_stream)
-class FineGrainedOffloadingBackwardRecordFunction(torch.autograd.Function):
-def fine_grained_offloading_backward_record(tensor, event: torch.cuda.Event) -> torch.Tensor:
-    """Record the backward event for cuda graph capture."""
-    return FineGrainedOffloadingBackwardRecordFunction.apply(tensor, event)
-class FineGrainedActivationOffloadingInterface:
-    """Interface for fine-grained activation offloading."""
-    def __init__(self, offload: bool, tensor: torch.Tensor, name: str):
+def fused_indices_to_multihot(indices, probs_indices, num_of_local_experts):
 
-third_party/Megatron-LM/megatron/core/distributed/fsdp/src/megatron_fsdp/fully_shard.py
-def experimental_api(func: Callable) -> Callable:
-    """
-    Mark a function or class as experimental API in Megatron CI/CD.
-    TODO(@cspades):
-def fully_shard_model(
-    module: torch.nn.Module,
-    device_mesh: Optional[DeviceMesh] = None,
-    dp_shard_dim: Optional[str] = None,
-    dp_outer_dim: Optional[str] = None,
-    tp_dim: Optional[str] = None,
-    hybrid_fsdp_group: Optional[torch.distributed.ProcessGroup] = None,
-    expt_device_mesh: Optional[DeviceMesh] = None,
-    fsdp_unit_modules: Optional[Sequence[Type[torch.nn.Module]] | Sequence[str]] = None,
-    zero_dp_strategy: str | int = 3,
-    outer_dp_sharding_strategy: str | int = 0,
-    device: Optional[torch.device] = None,
-    init_model_with_meta_device: bool = False,
-    grad_reduce_in_fp32: bool = False,
-    preserve_fp32_weights: bool = True,
-    overlap_grad_reduce: bool = True,
-    overlap_param_gather: bool = True,
-    sync_model_each_microbatch: bool = True,
-    preproc_state_dict_for_dcp_ckpt: bool = True,
-    check_for_nan_in_grad: bool = True,
-    average_in_collective: bool = False,
-    disable_bucketing: bool = False,
-    calculate_per_token_loss: bool = False,
-    keep_fp8_transpose_cache: bool = False,
-    nccl_ub: bool = False,
-    fsdp_double_buffer: bool = False,
-    disable_symmetric_registration: bool = False,
-) -> torch.nn.Module:
-    """
-    Fully-shard the model for Megatron-FSDP. This wraps the model in a MegatronFSDP
-    class that schedules the sharding lifecycle of the model parameters and gradients
-    during training and inference.
-    The original `torch.nn.Module` can be accessed at `MegatronFSDP.module`.
-    Args:
-        module (torch.nn.Module):
-def fully_shard_optimizer(
-    optimizer: torch.optim.Optimizer, preproc_state_dict_for_dcp_ckpt: bool = True
-) -> torch.optim.Optimizer:
-    """
-    Fully shard the optimizer for Megatron-FSDP. This is an in-place operation on the optimizer
-    instance, which modifies the optimizer to call methods exposed by the MegatronFSDP model API.
-    The optimizer should be registered on the MegatronFSDP distributed model parameters:
-    ```
-        # Fully-shard the model.
-        mfsdp_model = fully_shard_model(model, ...)
-        # Register the fully-sharded parameters with the optimizer.
-        # Use MegatronFSDP._replace_param_with_distributed_if_needed()
-        # to swap to the distributed optimizer state parameters.
-        optimizer = fully_shard_optimizer(Adam(params=mfsdp_model.parameters()))
-    ```
-    Args:
-        optimizer (torch.optim.Optimizer):
+third_party/Megatron-LM/megatron/core/inference/text_generation_server/dynamic_text_gen_server/flask_server.py
+def temp_log_level(level, logger=None):
 
-third_party/Megatron-LM/megatron/core/distributed/fsdp/mcore_fsdp_adapter.py
-def _get_hsdp_tp_mesh(outer_fsdp_dp_group, dp_cp_group, tp_group):
-def _get_dp_tp_mesh(dp_cp_group, tp_group, ep_size=1):
-def _check_mesh_ranks_and_group_ranks_are_consistent(mesh_ranks, group_ranks):
-def _get_rng_state_dict():
-def _load_rng_state_dict(rng_state_dict):
+third_party/Megatron-LM/megatron/core/models/multimodal/llava_model.py
+def _load_state_dict_hook_ignore_param_names(
+    param_names: List[str], module: torch.nn.Module, incompatible_keys: namedtuple
+):
+def _load_state_dict_hook_ignore_extra_state(
+    module: torch.nn.Module, incompatible_keys: namedtuple
+):
+def pixel_shuffle(x, scale_factor=0.5, version=2):
 
-third_party/Megatron-LM/megatron/core/transformer/transformer_block.py
-def get_num_layers_to_build(
-    config: TransformerConfig, vp_stage: Optional[int] = None, pp_rank: Optional[int] = None
-) -> int:
-    """
-    Determine the number of transformer layers to build for the current pipeline stage.
-    Args:
-        config (TransformerConfig):
-def _get_block_submodules(
-    config: TransformerConfig,
-    spec: Union[TransformerBlockSubmodules, ModuleSpec],
-    vp_stage: Optional[int] = None,
-    pp_rank: Optional[int] = None,
-) -> TransformerBlockSubmodules:
-    """
-    Retrieve or construct TransformerBlockSubmodules based on the provided specification.
-    Args:
-        config (TransformerConfig):
+third_party/Megatron-LM/megatron/core/inference/text_generation_server/dynamic_text_gen_server/tokenization.py
+def tokenize_prompts(
+    tokenizer, prompts=None, tokens_to_generate=None, add_BOS=None, rank=0, data_parallel=False
+):
+def _tokenize_prompts_and_batch(tokenizer, prompts, tokens_to_generate, add_BOS):
 
-third_party/Megatron-LM/megatron/core/pipeline_parallel/hybrid_cp_schedule.py
-def hybrid_context_parallel_forward_backward(
-    forward_step_func,
-    data_iterator,
-    model,
-    num_microbatches,
-    input_tensor,
-    output_tensor_grad,
-    forward_data_store,
+third_party/Megatron-LM/megatron/core/datasets/indexed_dataset.py
+def get_idx_path(path_prefix: str) -> str:
+    """Get the path to the index file from the prefix
+    Args:
+        path_prefix (str):
+def get_bin_path(path_prefix: str) -> str:
+    """Get the path to the data file from the prefix
+    Args:
+        path_prefix (str):
+
+third_party/Megatron-LM/megatron/core/extensions/transformer_engine.py
+def _get_fp8_autocast_for_quant_recipe(qrecipe: TEQuantizationRecipe):
+def _get_fp8_autocast_for_quant_params(qparams: TEQuantizationParams | None, training: bool):
+def _get_should_context_be_quantized_recipe(
+    qrecipe: TEQuantizationRecipe, is_original_context_quantized: bool
+):
+def _get_should_context_be_quantized_params(
+    qparams: TEQuantizationParams | None, training: bool, is_context_quantized: bool
+):
+def _get_extra_te_kwargs(config: TransformerConfig):
+def condition_init_method(config, init_method):
+def split_te_layernorm_column_parallel_linear(
+    fused_layer,
     config,
-    collect_non_loss_data,
-    first_val_step,
-    forward_only,
-    no_sync_func,
-    total_num_tokens,
-    check_first_val_step,
-    model_type,
+    init_method: Optional[callable] = None,
+    tp_group: Optional[torch.distributed.ProcessGroup] = None,
+):
+def te_checkpoint(
+    forward_func, distribute_saved_activations, get_rng_state_tracker, tp_group, *args, **kwargs
+):
+def set_save_original_input(module):
+
+third_party/Megatron-LM/megatron/core/inference/text_generation_server/run_mcore_engine.py
+def run_mcore_engine(
+    engine,
+    prompts=None,
+    temperature=1.0,
+    top_k=0,
+    top_p=0.0,
+    logprobs=True,
+    tokens_to_generate=0,
+    top_n_logprobs=0,
+    random_seed=-1,
 ):
 
-third_party/Megatron-LM/megatron/core/models/retro/encoder_spec.py
-def get_retro_encoder_layer_te_spec() -> ModuleSpec:
-    """Retro encoder TE spec (uses Transformer Engine components).
-    A Retro encoder layer uses custom attention, bias-dropout-add, and layernorm
-    operators to encode neighboring chunks that are retrieved from the chunk
-    database. Each operator is responsible for iterating the retrieved chunks
-    and processing them individually.
-    Returns:
-        A module spec if Transformer Engine modules.
+third_party/Megatron-LM/megatron/core/datasets/helpers.py
+def build_sample_idx(
+    sizes: numpy.ndarray,
+    document_indices: numpy.ndarray,
+    sequence_length: int,
+    num_epochs: int,
+    tokens_per_epoch: int,
+    drop_last_partial_sequence: bool = True,
+    add_extra_token_to_sequence: bool = True,
+):
+
+third_party/Megatron-LM/megatron/core/transformer/cuda_graphs.py
+def is_graph_capturing():
+def _set_capture_start():
+def _set_capture_end():
+def is_graph_warmup():
+def _set_warmup_start():
+def _set_warmup_end():
+def tree_map(func, tree):
+def _check_supported_type(meta):
+def _determine_if_first_last_layer_of_this_vp_chunk(base_module):
+def _clone_nested_tensors(value: Any) -> Any:
+    """Recursively clone tensors inside nested containers."""
+    if torch.is_tensor(value):
+def _ensure_generator_state_is_cudagraph_safe(gen: torch.Generator) -> torch.Generator:
+    """Make generator state safe for CUDA graph capture/replay.
+    Generator state tensors can become inference tensors if created under `torch.inference_mode()`.
+    CUDA graph capture may later attempt in-place updates on that state; this fails for inference
+    tensors. Fix the generator *in-place* (preserving identity) by cloning its state outside
+    inference mode and setting it back.
     """
-    spec = get_gpt_layer_with_transformer_engine_spec()
-    spec.submodules.pre_cross_attn_layernorm = TENorm
-    spec.submodules.cross_attention = ModuleSpec(
-        module=RetroEncoderCrossAttention,
-        params={"attn_mask_type": AttnMaskType.padding},
-        submodules=CrossAttentionSubmodules(
-            linear_q=TEColumnParallelLinear,
-            linear_kv=TEColumnParallelLinear,
-            core_attention=TEDotProductAttention,
-            linear_proj=TERowParallelLinear,
-        ),
-    )
-    spec.submodules.cross_attn_bda = ModuleSpec(module=RetroEncoderBiasDropoutAdd)
-    spec.submodules.pre_mlp_layernorm = ModuleSpec(module=RetroEncoderLayerNorm, submodules=TENorm)
-    spec.submodules.mlp = ModuleSpec(
-        module=MLP,
-        submodules=MLPSubmodules(linear_fc1=TEColumnParallelLinear, linear_fc2=TERowParallelLinear),
-    )
-    return spec
-def get_retro_encoder_layer_local_spec() -> ModuleSpec:
-    """Retro encoder local spec (uses Megatron-Core components).
-    A Retro encoder layer uses custom attention, bias-dropout-add, and layernorm
-    operators to encode neighboring chunks that are retrieved from the chunk
-    database. Each operator is responsible for iterating the retrieved chunks
-    and processing them individually.
-    Returns:
-        A module spec if local modules.
-    """
-    spec = get_gpt_layer_local_spec()
-    spec.submodules.pre_cross_attn_layernorm = LNImpl
-    spec.submodules.cross_attention = ModuleSpec(
-        module=RetroEncoderCrossAttention,
-        params={"attn_mask_type": AttnMaskType.padding},
-        submodules=CrossAttentionSubmodules(
-            linear_q=ColumnParallelLinear,
-            linear_kv=ColumnParallelLinear,
-            core_attention=DotProductAttention,
-            linear_proj=RowParallelLinear,
-        ),
-    )
-    spec.submodules.cross_attn_bda = ModuleSpec(module=RetroEncoderBiasDropoutAdd)
-    spec.submodules.pre_mlp_layernorm = ModuleSpec(module=RetroEncoderLayerNorm, submodules=LNImpl)
-    spec.submodules.mlp = ModuleSpec(
-        module=MLP,
-        submodules=MLPSubmodules(linear_fc1=ColumnParallelLinear, linear_fc2=RowParallelLinear),
-    )
-    spec.submodules.sharded_state_dict_keys_map = {
-        'input_layernorm.': 'self_attention.linear_qkv.layer_norm_'
-    }  # pre_mlp_layernorm doesn't need remapping
-    return spec
-def get_retro_encoder_block_spec(
-    config: RetroConfig, use_transformer_engine: bool
-) -> TransformerBlockSubmodules:
-    """Retro encoder block spec.
-    The retro encoder block consists of one customized Retro encoder layer
-    (layer 1), and all of the following layers are standard GPT layers.
-    Args:
-      config (RetroConfig):
+    with torch.inference_mode(mode=False):
+def create_cudagraphs():
+def delete_cuda_graphs():
+def _layer_is_graphable(layer, config):
+def convert_schedule_table_to_order(num_warmup_microbatches, num_model_chunks, schedule_table):
+def get_overlap_moe_expert_parallel_comm_order(order, num_layers_per_chunk, capture_wgrad_graph):
 
 third_party/Megatron-LM/megatron/core/dist_checkpointing/strategies/fully_parallel.py
 def distribute_main_replicas_with_precomputed_distribution(
@@ -2036,941 +2155,22 @@ def _fill_in_deferred_sharded_items(
     def fill_in_sharded_item(x: Any) -> Any:
         if isinstance(x, item_type):
 
-third_party/Megatron-LM/megatron/core/pipeline_parallel/p2p_communication.py
-def _batched_p2p_ops(
-    *,
-    tensor_send_prev: Optional[torch.Tensor],
-    tensor_recv_prev: Optional[torch.Tensor],
-    tensor_send_next: Optional[torch.Tensor],
-    tensor_recv_next: Optional[torch.Tensor],
-    group: torch.distributed.ProcessGroup,
-    prev_pipeline_rank: int,
-    next_pipeline_rank: int,
-):
-def _p2p_ops(
-    *,
-    tensor_send_prev: Optional[torch.Tensor],
-    tensor_recv_prev: Optional[torch.Tensor],
-    tensor_send_next: Optional[torch.Tensor],
-    tensor_recv_next: Optional[torch.Tensor],
-    group: torch.distributed.ProcessGroup,
-    prev_pipeline_rank: int,
-    next_pipeline_rank: int,
-):
-def is_single_shape(x) -> bool:
-    """Check if the input is a single shape."""
-    if isinstance(x, torch.Size):
+third_party/Megatron-LM/megatron/core/transformer/spec_utils.py
+def import_module(module_path: Tuple[str]):
+def get_module(spec_or_module: Union[ModuleSpec, type], **additional_kwargs):
+def build_module(spec_or_module: Union[ModuleSpec, type], *args, **kwargs):
 
-third_party/Megatron-LM/megatron/core/models/T5/t5_spec.py
-def encoder_model_with_transformer_engine_default_spec() -> ModuleSpec:
-    """T5 encoder TE spec (uses Transformer Engine components)."""
-    return ModuleSpec(
-        module=TransformerLayer,
-        submodules=TransformerLayerSubmodules(
-            self_attention=ModuleSpec(
-                module=SelfAttention,
-                params={"attn_mask_type": AttnMaskType.padding},
-                submodules=SelfAttentionSubmodules(
-                    linear_qkv=TELayerNormColumnParallelLinear,
-                    core_attention=TEDotProductAttention,
-                    linear_proj=TERowParallelLinear,
-                    q_layernorm=IdentityOp,
-                    k_layernorm=IdentityOp,
-                ),
-            ),
-            self_attn_bda=get_bias_dropout_add,
-            mlp=ModuleSpec(
-                module=MLP,
-                submodules=MLPSubmodules(
-                    linear_fc1=TELayerNormColumnParallelLinear, linear_fc2=TERowParallelLinear
-                ),
-            ),
-            mlp_bda=get_bias_dropout_add,
-        ),
-    )
-def decoder_model_with_transformer_engine_default_spec() -> ModuleSpec:
-    """T5 decoder TE spec (uses Transformer Engine components)."""
-    return ModuleSpec(
-        module=TransformerLayer,
-        submodules=TransformerLayerSubmodules(
-            self_attention=ModuleSpec(
-                module=SelfAttention,
-                params={"attn_mask_type": AttnMaskType.causal},
-                submodules=SelfAttentionSubmodules(
-                    linear_qkv=TELayerNormColumnParallelLinear,
-                    core_attention=TEDotProductAttention,
-                    linear_proj=TERowParallelLinear,
-                    q_layernorm=IdentityOp,
-                    k_layernorm=IdentityOp,
-                ),
-            ),
-            self_attn_bda=get_bias_dropout_add,
-            pre_cross_attn_layernorm=TENorm,
-            cross_attention=ModuleSpec(
-                module=CrossAttention,
-                params={"attn_mask_type": AttnMaskType.padding},
-                submodules=CrossAttentionSubmodules(
-                    linear_q=TEColumnParallelLinear,
-                    linear_kv=TEColumnParallelLinear,
-                    core_attention=TEDotProductAttention,
-                    linear_proj=TERowParallelLinear,
-                ),
-            ),
-            cross_attn_bda=get_bias_dropout_add,
-            mlp=ModuleSpec(
-                module=MLP,
-                submodules=MLPSubmodules(
-                    linear_fc1=TELayerNormColumnParallelLinear, linear_fc2=TERowParallelLinear
-                ),
-            ),
-            mlp_bda=get_bias_dropout_add,
-        ),
-    )
-def encoder_model_with_local_spec() -> ModuleSpec:
-    """T5 encoder local spec (uses Megatron-Core components)."""
-    return ModuleSpec(
-        module=TransformerLayer,
-        submodules=TransformerLayerSubmodules(
-            input_layernorm=LNImpl,
-            self_attention=ModuleSpec(
-                module=SelfAttention,
-                params={"attn_mask_type": AttnMaskType.arbitrary},
-                submodules=SelfAttentionSubmodules(
-                    linear_qkv=ColumnParallelLinear,
-                    core_attention=DotProductAttention,
-                    linear_proj=RowParallelLinear,
-                    q_layernorm=IdentityOp,
-                    k_layernorm=IdentityOp,
-                ),
-            ),
-            self_attn_bda=get_bias_dropout_add,
-            pre_mlp_layernorm=LNImpl,
-            mlp=ModuleSpec(
-                module=MLP,
-                submodules=MLPSubmodules(
-                    linear_fc1=ColumnParallelLinear, linear_fc2=RowParallelLinear
-                ),
-            ),
-            mlp_bda=get_bias_dropout_add,
-            sharded_state_dict_keys_map={
-                "input_layernorm.": "self_attention.linear_qkv.layer_norm_",
-                "pre_mlp_layernorm.": "mlp.linear_fc1.layer_norm_",
-            },
-        ),
-    )
-def decoder_model_with_local_spec() -> ModuleSpec:
-    """T5 decoder local spec (uses Megatron-Core components)."""
-    return ModuleSpec(
-        module=TransformerLayer,
-        submodules=TransformerLayerSubmodules(
-            input_layernorm=LNImpl,
-            self_attention=ModuleSpec(
-                module=SelfAttention,
-                params={"attn_mask_type": AttnMaskType.causal},
-                submodules=SelfAttentionSubmodules(
-                    linear_qkv=ColumnParallelLinear,
-                    core_attention=DotProductAttention,
-                    linear_proj=RowParallelLinear,
-                    q_layernorm=IdentityOp,
-                    k_layernorm=IdentityOp,
-                ),
-            ),
-            self_attn_bda=get_bias_dropout_add,
-            pre_cross_attn_layernorm=LNImpl,
-            cross_attention=ModuleSpec(
-                module=CrossAttention,
-                params={"attn_mask_type": AttnMaskType.arbitrary},
-                submodules=CrossAttentionSubmodules(
-                    linear_q=ColumnParallelLinear,
-                    linear_kv=ColumnParallelLinear,
-                    core_attention=DotProductAttention,
-                    linear_proj=RowParallelLinear,
-                ),
-            ),
-            cross_attn_bda=get_bias_dropout_add,
-            pre_mlp_layernorm=LNImpl,
-            mlp=ModuleSpec(
-                module=MLP,
-                submodules=MLPSubmodules(
-                    linear_fc1=ColumnParallelLinear, linear_fc2=RowParallelLinear
-                ),
-            ),
-            mlp_bda=get_bias_dropout_add,
-            sharded_state_dict_keys_map={
-                "input_layernorm.": "self_attention.linear_qkv.layer_norm_",
-                "pre_mlp_layernorm.": "mlp.linear_fc1.layer_norm_",
-            },
-        ),
-    )
-def get_t5_encoder_with_transformer_engine_block_spec(
-    num_layers: int,
-) -> TransformerBlockSubmodules:
-    """T5 encoder block spec for Transformer Engine
+third_party/Megatron-LM/megatron/core/models/T5/t5_model.py
+def t5_extended_attention_mask(attention_mask_list: List[Tensor]) -> List[Tensor]:
+    """Creates the extended attention mask
+    Converts the attention mask of dimension [batch size, seq_len, seq_len]
+    to [batch size, 1, seq_len, seq_len]
     Args:
-      config (TransformerConfig):
-def get_t5_decoder_with_transformer_engine_block_spec(
-    num_layers: int,
-) -> TransformerBlockSubmodules:
-    """T5 decoder block spec for Transformer Engine
+        attention_mask (Tensor):
+def t5_position_ids(token_ids: Tensor) -> Tensor:
+    """Calculate position ids from token ids
     Args:
-      config (TransformerConfig):
-def get_t5_encoder_with_local_block_spec(num_layers: int) -> TransformerBlockSubmodules:
-    """T5 encoder block spec for local (uses Megatron-Core components)
-    Args:
-      num_layers (int):
-def get_t5_decoder_with_local_block_spec(num_layers: int) -> TransformerBlockSubmodules:
-    """T5 decoder block spec for local (uses Megatron-Core components)
-    Args:
-      num_layers (int):
-
-third_party/Megatron-LM/megatron/core/models/multimodal/llava_model.py
-def _load_state_dict_hook_ignore_param_names(
-    param_names: List[str], module: torch.nn.Module, incompatible_keys: namedtuple
-):
-def _load_state_dict_hook_ignore_extra_state(
-    module: torch.nn.Module, incompatible_keys: namedtuple
-):
-def pixel_shuffle(x, scale_factor=0.5, version=2):
-
-third_party/Megatron-LM/megatron/core/dist_checkpointing/strategies/state_dict_saver.py
-def _compare_dataclasses(obj1, obj2):
-def save_state_dict_async_plan(
-    state_dict: STATE_DICT_TYPE,
-    storage_writer: 'FileSystemWriterAsync',
-    process_group: Optional[dist.ProcessGroup] = None,
-    coordinator_rank: int = 0,
-    planner: Optional[Union[SavePlanner, 'MCoreSavePlanner']] = None,
-    cached_ckpt_structure: Optional[Tuple[SavePlan, SavePlan, bool]] = None,
-    loaded_all_plans: Optional[List[SavePlan]] = None,
-) -> Tuple[Tuple['FileSystemWriterAsync', Union[Metadata, None], _DistWrapper], SavePlan, bool]:
-    """
-    First stage of saving a state dict to storage.
-    This is an async adjustment of torch.distributed.checkpoint.state_dict_saver.
-    In order to support async save, saving should be split into three parts:
-    1. Planning
-    2. Actual saving
-    3. Finalization
-    Out of these, step (2) *must* happen asynchronously.
-    The first step is realized with this function.
-    The planning part consists of several steps, described here:
-    https://pytorch.org/docs/stable/distributed.checkpoint.html#torch.distributed.checkpoint.SavePlanner
-    Args:
-        state_dict (STATE_DICT_TYPE):
-def verify_global_md_reuse(
-    loaded_all_plans: List[SavePlan], local_plan: SavePlan, rank: int, dist_wrapper: _DistWrapper
-) -> bool:
-    """
-    Verifies that global metadata reuse is possible by checking the loaded plans from the
-     checkpoint are consistent, which means we have the same settings when resuming training.
-    Args:
-        loaded_all_plans: List[SavePlan], The loaded plans from the checkpoint
-         (stored in checkpoint metadata).
-        local_plan: SavePlan, The local save plan.
-        rank: Current process rank.
-        dist_wrapper (_DistWrapper):
-def save_state_dict_async_finalize(
-    storage_writer: 'FileSystemWriterAsync', global_metadata: Metadata, dist_wrapper: _DistWrapper
-) -> None:
-    """
-    Finalization of save_state_dict_async_plan.
-    The input arguments are the same as the save_state_dict_async_plan output,
-    the `write_results` are retrieved from the storage_writer.
-    Args:
-        storage_writer (FileSystemWriterAsync):
-
-third_party/Megatron-LM/megatron/core/distributed/fsdp/src/megatron_fsdp/uneven_dtensor.py
-def gather_and_compute_chunk_metadata(dtensor: DTensor) -> ChunkStorageMetadata:
-    """
-    Gather chunk metadata for a DTensor across all ranks and compute the
-    offsets and sizes of each chunk. This is necessary for handling uneven
-    sharding in distributed tensors.
-    """
-    local_tensor = dtensor.to_local()
-    local_shape = local_tensor.shape
-    device_mesh = dtensor.device_mesh
-    offsets = [0] * len(local_shape)
-    cumulative_shape = list(local_shape).copy()
-    def _update_offsets_and_cumulative_shape(
-        mesh_dim: int, offsets: List[int], cumulative_shape: List[int]
-    ):
-def update_uneven_dtensor_chunk_metadata(dtensor: DTensor) -> dict:
-    """
-    Update the DTensor's chunk metadata to handle uneven sharding.
-    This function modifies the DTensor in-place to include chunk metadata
-    and write items closures for saving and loading.
-    """
-    def _chunk_list_closure(chunk_meta):
-def validate_uneven_dtensor(dtensor: DTensor) -> None:
-    """
-    Validates the chunk metadata of an uneven DTensor to ensure correctness and boundary coverage.
-    Notes:
-    - `gather_and_compute_chunk_metadata` will ensure that all chunks do not overlap.
-    This function performs the following checks:
-      - All chunk offsets and sizes are within the tensor shape bounds.
-      - All boundaries of each dimension are actually covered by shard placements.
-    Args:
-        dtensor (DTensor):
-def filter_unflattened_state_dict(state_dict, key_chain=[], visit_condition=lambda x: False):
-def get_unflattened_state_dict(state_dict, key_chain=[]):
-def preprocess_state_dict_for_uneven_dtensor(state_dict: dict) -> dict:
-    """
-    Preprocess the state_dict to prepare it for saving or loading unevenly sharded DTensors.
-    This function modifies the DTensors in the state_dict to include chunk metadata
-    and write items closures.
-    """
-    visit_dtensor = filter_unflattened_state_dict(
-        state_dict, visit_condition=lambda x: isinstance(x, DTensor)
-    )
-    for key_chain in visit_dtensor:
-        # Get the DTensor at the key chain
-        dtensor = get_unflattened_state_dict(state_dict, key_chain)
-        update_uneven_dtensor_chunk_metadata(dtensor)
-    return state_dict
-def gather_uneven_dtensor_to_full_tensor(
-    dtensor: DTensor, target_device: Optional[torch.device] = None
-) -> DTensor:
-    """
-    Gather an unevenly sharded DTensor distributed across multiple ranks,
-    reconstructing the full (unsharded) tensor on each rank.
-    This function handles uneven chunk sizes and offsets by collecting
-    chunk metadata from all ranks, performing all-gather operations,
-    and assembling the full tensor accordingly. The returned tensor
-    is fully replicated across the given device mesh.
-    Args:
-        dtensor (DTensor):
-def _assemble_full_tensor_from_uneven_chunks(
-    dtensor: DTensor,
-    all_chunk_info: List[dict],
-    process_group: torch.distributed.ProcessGroup,
-    target_device: Optional[torch.device],
-) -> DTensor:
-    """
-    Assemble the full tensor from unevenly sized chunks gathered from all ranks.
-    Args:
-        dtensor (DTensor):
-def _intersection(s1, s2):
-def _offset_slice(s, offset):
-def split_dtensor(
-    dtensor: DTensor,
-    split_size_or_sections: Union[int, List[int]],
-    dim: int = 0,
-    update_uneven_dtensor_chunk_meta: bool = False,
-) -> Iterable[DTensor]:
-    """
-    Splits a DTensor into smaller DTensors along a specified dimension.
-    This function manages uneven sharding by accurately assigning chunk metadata
-    for each split. Unlike the native PyTorch DTensor split functionality,
-    it does not redistribute `Replicate` placements, which helps avoid Out-Of-Memory (OOM) issues.
-    Args:
-        dtensor (DTensor):
-
-third_party/Megatron-LM/megatron/core/dist_checkpointing/utils.py
-def zip_strict(*args):
-def _sharded_tensor_shard_id(sharded_tensor: ShardedTensor) -> _ShardId:
-    """Unique id of the sharded tensor data.
-    Should yield the same value for same data replicated on different ranks.
-    Args:
-        sharded_tensor (ShardedTensor):
-def _sharded_object_id(sharded_object: ShardedObject) -> _ShardId:
-    """Unique id of the sharded object data.
-    Should yield the same value for same data replicated on different ranks.
-    Args:
-        sharded_object (ShardedObject):
-def extract_sharded_tensors(
-    sharded_state_dict: ShardedStateDict,
-) -> Tuple[ShardedStateDict, StateDict]:
-    """Extract a dict consisting of only ShardedTensor objects
-    from a given state dict with any objects.
-    Args:
-        sharded_state_dict: state dict possibly containing ShardedTensor objects
-    Returns:
-        Tuple[ShardedStateDict, StateDict]: tuple of:
-            - state dict with all ShardedTensor (keeping the original state dict structure)
-            - state dict with all objects other than ShardedTensor
-              (keeping the original state dict structure)
-    """
-    return extract_matching_values(sharded_state_dict, lambda v: isinstance(v, ShardedTensor))
-def extract_sharded_tensors_and_factories(
-    sharded_state_dict: ShardedStateDict,
-) -> Tuple[ShardedStateDict, StateDict]:
-    """Extract a dict consisting of only ShardedTensor and ShardedTensorFactory objects
-    from a given state dict with any objects.
-    Args:
-        sharded_state_dict:
-            state dict possibly containing ShardedTensor and ShardedTensorFactory objects
-    Returns:
-        Tuple[ShardedStateDict, StateDict]: tuple of:
-            - state dict with all ShardedTensor and ShardedTensorFactory
-              (keeping the original state dict structure)
-            - state dict with all other objects (keeping the original state dict structure)
-    """
-    return extract_matching_values(
-        sharded_state_dict, lambda v: isinstance(v, (ShardedTensor, ShardedTensorFactory))
-    )
-def extract_sharded_tensors_or_nonpersistent(
-    sharded_state_dict: ShardedStateDict,
-) -> Tuple[ShardedStateDict, StateDict]:
-    """Extract a dict consisting of only ShardedTensor, ShardedTensorFactory
-    and LocalNonpersistentObject objects from a given state dict with any objects.
-    Args:
-        sharded_state_dict: state dict possibly containing ShardedTensor, ShardedTensorFactory
-        and LocalNonpersistentObject objects
-    Returns:
-        Tuple[ShardedStateDict, StateDict]: tuple of:
-            - state dict with all ShardedTensor, ShardedTensorFactory and LocalNonpersistentObject
-              (keeping the original state dict structure)
-            - state dict with all other objects (keeping the original state dict structure)
-    """
-    return extract_matching_values(
-        sharded_state_dict,
-        lambda v: isinstance(v, (ShardedTensor, LocalNonpersistentObject, ShardedTensorFactory)),
-    )
-def extract_sharded_base(
-    sharded_state_dict: ShardedStateDict,
-) -> Tuple[ShardedStateDict, StateDict]:
-    """Extract a dict consisting of only ShardedBase from a given state dict with any objects.
-    Args:
-        sharded_state_dict: state dict possibly containing ShardedBase objects
-    Returns:
-        Tuple[ShardedStateDict, StateDict]: tuple of:
-            - state dict with all ShardedBase objects (keeping the original state dict structure)
-            - state dict with all other objects (keeping the original state dict structure)
-    """
-    return extract_matching_values(sharded_state_dict, lambda v: isinstance(v, ShardedBase))
-def extract_nonpersistent(
-    sharded_state_dict: ShardedStateDict,
-) -> Tuple[ShardedStateDict, StateDict]:
-    """Extract a dict consisting of only LocalNonpersistentObjects from a given state dict.
-    Args:
-        sharded_state_dict: state dict possibly containing LocalNonpersistentObjects
-    Returns:
-        Tuple[ShardedStateDict, StateDict]: tuple of:
-            - state dict with all LocalNonpersistentObjects
-              (keeping the original state dict structure)
-            - state dict with all other objects (keeping the original state dict structure)
-    """
-    return extract_matching_values(
-        sharded_state_dict, lambda v: isinstance(v, LocalNonpersistentObject)
-    )
-def add_prefix_for_sharding(sharded_state_dict: ShardedStateDict, prefix: str):
-def replace_prefix_for_sharding(
-    sharded_state_dict: ShardedStateDict, old_prefix: str, new_prefix: str
-):
-def apply_prefix_mapping(sharded_state_dict: ShardedStateDict, prefix_map: Dict[str, str]):
-def force_all_tensors_to_non_fp8(sharded_state_dict: ShardedStateDict):
-def logger_stack(name: Optional[str] = None, current_logger: Optional[logging.Logger] = None):
-def debug_time(
-    name: str, logger: Optional[logging.Logger] = None, threshold: float = float("-inf"), level=None
-):
-def debug_msg(msg: str):
-
-third_party/Megatron-LM/megatron/core/config.py
-def set_experimental_flag(flag: bool):
-def is_experimental_enabled():
-
-third_party/Megatron-LM/megatron/core/dist_checkpointing/strategies/base.py
-def get_default_strategy(action: StrategyAction, backend: str, version: int):
-def register_default_strategy(
-    action: StrategyAction,
-    backend: str,
-    version: int,
-    strategy: Union['SaveStrategyBase', 'LoadStrategyBase'],
-):
-
-third_party/Megatron-LM/megatron/core/fusions/fused_cross_entropy.py
-def calculate_logits_max(vocab_parallel_logits: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
-    """
-    Calculates the maximum logits of the predicted tokens.
-    """
-    vocab_parallel_logits, logits_max = VocabParallelCrossEntropy.calculate_logits_max(
-        vocab_parallel_logits
-    )
-    return vocab_parallel_logits, logits_max
-@jit_fuser
-def calculate_predicted_logits(
-    vocab_parallel_logits: torch.Tensor,
-    target: torch.Tensor,
-    logits_max: torch.Tensor,
-    vocab_start_index: int,
-    vocab_end_index: int,
-) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
-    """
-    Calculates the predicted logits for the tokens.
-    """
-    (target_mask, masked_target_1d, predicted_logits, sum_exp_logits, exp_logits) = (
-        VocabParallelCrossEntropy.calculate_predicted_logits(
-            vocab_parallel_logits, target, logits_max, vocab_start_index, vocab_end_index
-        )
-    )
-    predicted_logits_sum_exp_logits = torch.cat((predicted_logits, sum_exp_logits))
-    return target_mask, masked_target_1d, predicted_logits_sum_exp_logits, exp_logits
-@jit_fuser
-def calculate_cross_entropy_loss(
-    exp_logits: torch.Tensor, predicted_logits_sum_exp_logits: torch.Tensor
-) -> Tuple[torch.Tensor, torch.Tensor]:
-    """
-    Calculates the final cross entropy loss for the tokens.
-    """
-    split_val = predicted_logits_sum_exp_logits.size()[0] // 2
-    predicted_logits, sum_exp_logits = torch.split(predicted_logits_sum_exp_logits, split_val)
-    exp_logits, loss = VocabParallelCrossEntropy.calculate_cross_entropy_loss(
-        exp_logits, predicted_logits, sum_exp_logits
-    )
-    return exp_logits, loss
-@jit_fuser
-def calculate_gradients(
-    softmax: torch.Tensor,
-    grad_output: torch.Tensor,
-    target_mask: torch.Tensor,
-    masked_target_1d: torch.Tensor,
-) -> torch.Tensor:
-    """
-    Calculate the logits gradients scaled based on the CE loss
-    """
-    (grad_2d, arange_1d, softmax_update, grad_input) = (
-        VocabParallelCrossEntropy.prepare_gradient_calculation_operands(softmax, target_mask)
-    )
-    grad_input = VocabParallelCrossEntropy.calculate_gradients(
-        grad_2d, arange_1d, masked_target_1d, softmax_update, grad_input, grad_output
-    )
-    grad_input = grad_input.to(torch.bfloat16)
-    return grad_input
-class _VocabParallelCrossEntropy(torch.autograd.Function):
-def fused_vocab_parallel_cross_entropy(vocab_parallel_logits, target, tp_group):
-
-third_party/Megatron-LM/megatron/core/distributed/fsdp/src/megatron_fsdp/utils.py
-def get_te_version():
-def is_te_min_version(vers, check_equality=True):
-def is_submodule(module, parent_module, strict=True):
-def get_mesh_names(
-    device_mesh: Optional[DeviceMesh] = None, only_submesh_dims: bool = False
-) -> list[str]:
-    """
-    Get all the sub-mesh ("dp", "cp", etc.) and flattened-mesh ("dp_cp", etc.) names
-    in the DeviceMesh. When only_submesh_dims=True, only checks for sub-mesh dimensions.
-    """
-    if device_mesh is None:
-        # Device mesh does not exist.
-        return []
-    # Sub-mesh dimension names.
-    submesh_dim_names = (
-        list(device_mesh.mesh_dim_names) if device_mesh.mesh_dim_names is not None else []
-    )
-    # Flattened mesh dimension names.
-    try:
-        # Retrieve all flattened meshes associated with DeviceMesh.
-        # The flattened DeviceMesh are all located in the _flatten_mapping
-        # dictionary of the root DeviceMesh.
-        flatten_mesh_names = [
-            flat_dim
-            for flat_dim, flat_mesh in device_mesh._get_root_mesh()._flatten_mapping.items()
-        ]
-    except AttributeError:
-        # Fallback to the DeviceMesh global state to retrieve flattened
-        # meshes associated with the DeviceMesh.
-        from torch.distributed.device_mesh import _mesh_resources
-        flatten_mesh_names = [
-            child_mesh_dim_name
-            for child_mesh, root_mesh in _mesh_resources.child_to_root_mapping.items()
-            for child_mesh_dim_name in (child_mesh.mesh_dim_names or [])
-            if root_mesh == device_mesh and child_mesh_dim_name not in submesh_dim_names
-        ]
-    # Order of the returned list of mesh dimension names must match the index
-    # of the root mesh dimension names followed by flattened sub-meshes:
-    # [<root mesh dimension names>, <flattened mesh dimension names>]
-    if only_submesh_dims:
-        return submesh_dim_names
-    else:
-        return submesh_dim_names + flatten_mesh_names
-def contains_submesh(
-    device_mesh: Optional[DeviceMesh], submesh_names: Optional[str | Sequence[str]]
-) -> bool:
-    """
-    Check if a sub-mesh exists in the device mesh by name.
-    """
-    if device_mesh is None or submesh_names is None:
-        # Device mesh does not exist.
-        return False
-    if isinstance(submesh_names, str):
-def _get_cuda_rng_state(
-    device: Union[int, str, torch.device] = "cuda", clone: bool = False, graph_safe: bool = False
-) -> torch.Tensor:
-    """Return the random number generator state of the specified GPU.
-    Arguments:
-        device (int):
-def _set_cuda_rng_state(new_state: torch.Tensor, device: int = -1, graph_safe: bool = False):
-def initialize_rng_tracker(
-    use_te_rng_tracker: bool = False,
-    inference_rng_tracker: bool = False,
-    use_cudagraphable_rng: bool = False,
-    force_reset: bool = False,
-):
-def get_cuda_rng_tracker(
-    use_te_rng_tracker: bool = False,
-    inference_rng_tracker: bool = False,
-    use_cudagraphable_rng: bool = False,
-):
-def get_global_memory_buffer():
-def create_updated_function_signature(original_function, **extended_kwargs: dict):
-def is_mcore_tensor_model_parallel(param: torch.Tensor) -> bool:
-    """
-    Check if the given parameter is Megatron-Core tensor model parallel.
-    """
-    return getattr(param, "_mcore_tp", False) or getattr(param, "tensor_model_parallel", False)
-def is_mcore_tensor_parallel_duplicated(param: torch.Tensor) -> bool:
-    """
-    Check if the given parameter is Megatron-Core tensor model parallel and duplicated.
-    """
-    return getattr(param, "_tp_duplicated", False)
-def get_mcore_tensor_parallel_partition_dim(param: torch.Tensor) -> Optional[int]:
-    """
-    Get the partition dimension for a Megatron-Core tensor model parallel parameter.
-    """
-    if is_mcore_tensor_model_parallel(param):
-
-third_party/Megatron-LM/megatron/core/dist_checkpointing/strategies/common.py
-def register_default_common_strategies():
-
-third_party/Megatron-LM/megatron/core/dist_checkpointing/serialization.py
-def load(
-    sharded_state_dict: ShardedStateDict,
-    checkpoint_dir: str,
-    sharded_strategy: Union[LoadShardedStrategy, Tuple[str, int], None] = None,
-    common_strategy: Union[LoadCommonStrategy, Tuple[str, int], None] = None,
-    validate_access_integrity: bool = True,
-    strict: Union[str, StrictHandling] = StrictHandling.ASSUME_OK_UNEXPECTED,
-) -> Union[StateDict, Tuple[StateDict, Set[str], Set[str]]]:
-    """Loading entrypoint.
-    In the steps below, the following verbs refer to corresponding objects:
-    - load = load from checkpoint
-    - extract = extract from sharded_state_dict
-    - add = add to the final state dict
-    Steps:
-    1. Load common state dict and form the base of the result state dict
-    2. Apply factories to sharded_state_dict
-    3. Extract LocalNonPersistentObject and add
-    4. (optional) Extract ShardedObjects, load and add
-    5. Extract ShardedBase, load, apply factory merges and add
-    Args:
-        sharded_state_dict (ShardedStateDict):
-def load_common_state_dict(checkpoint_dir: Union[str, Path]) -> StateDict:
-    """Load common (non-sharded) objects state dict from the checkpoint.
-    Args:
-        checkpoint_dir (str):
-def load_tensors_metadata(
-    checkpoint_dir: str, sharded_strategy: Union[LoadShardedStrategy, None] = None
-) -> CkptShardedMetadata:
-    """Load tensors metadata from the checkpoint.
-    Returns a dictionary similar to a sharded state dict, but note that
-    the dictionary keys are simply ShardedTensor keys (contrary to the
-    actual sharded state dicts where keys correspond to state dict keys).
-    Dict values are ShardedTensors without any sharding (so, the only useful
-    information is tensors global shape and dtype).
-    Concrete implementation depends on the loading strategy. If no strategy is
-    given, a default for a given backend is used.
-    Args:
-        checkpoint_dir (str):
-def load_sharded_metadata(
-    checkpoint_dir: str,
-    sharded_strategy: Union[LoadShardedStrategy, None] = None,
-    common_strategy: Union[LoadCommonStrategy, None] = None,
-) -> CkptShardedMetadata:
-    """Load sharded metadata from the checkpoint.
-    Similar to `load_tensors_metadata`, but includes also ShardedObjects.
-    Returns a dictionary similar to a sharded state dict, but note that
-    the dictionary keys are simply ShardedTensor keys (contrary to the
-    actual sharded state dicts where keys correspond to state dict keys).
-    Dict values are ShardedTensors without any sharding (so, the only useful
-    information is tensors global shape and dtype).
-    Concrete implementation depends on the loading strategy. If no strategy is
-    given, a default for a given backend is used.
-    Args:
-        checkpoint_dir (str):
-def load_plain_tensors(checkpoint_dir: str) -> StateDict:
-    """Load checkpoint tensors without any sharding and plain structure.
-    NOTE: common state dict is NOT included.
-    Args:
-        checkpoint_dir (str):
-def load_content_metadata(
-    checkpoint_dir: Optional[str] = None, *, preloaded_state_dict: Optional[StateDict] = None
-) -> Optional[dict]:
-    """Load content metadata stored in the checkpoint with `save(..., content_metadata=...)`.
-    Args:
-        checkpoint_dir (str, optional):
-def remove_sharded_tensors(checkpoint_dir: str, key_prefix: str):
-def save(
-    sharded_state_dict: ShardedStateDict,
-    checkpoint_dir: str,
-    sharded_strategy: Union[SaveShardedStrategy, Tuple[str, int], None] = None,
-    common_strategy: Union[SaveCommonStrategy, Tuple[str, int], None] = None,
-    validate_access_integrity: bool = True,
-    async_sharded_save: bool = False,
-    preprocess_common_before_consistancy_check: Optional[
-        Callable[[CommonStateDict], StateDict]
-    ] = None,
-    content_metadata: Optional[dict] = None,
-) -> Optional[AsyncRequest]:
-    """Saving entrypoint.
-    Extracts ShardedTensors from the given state dict. Rank 0 saves the
-    "regular" part of the checkpoint to common torch file.
-    The ShardedTensors are saved according to a strategy specified by the
-    config.
-    Steps:
-    1. Apply factories
-    2. Extract and discard LocalNonPersistentObject
-    3. Extract all ShardedBase object
-    4. Save all other objects to common.pt
-    5. (optional) Extract and save ShardedObjects
-    6. Save all ShardedBase objects
-    7. Write metadata.json file with backend and version metadata.
-    Step (6) can be performed asynchronously (see `async_sharded_save`), in this
-    case the actual save is embodied in the returned async request and can be
-    scheduled by the external caller. For async request, step (7) is added as
-    one of the finalization functions, so that metadata.json is written only
-    if the checkpoint is complete.
-    Args:
-        sharded_state_dict (ShardedStateDict):
-
-third_party/Megatron-LM/megatron/core/fusions/fused_bias_dropout.py
-def _bias_dropout_add_func(x_with_bias, residual, prob, training):
-def bias_dropout_add_unfused(training):
-def bias_dropout_add_fused_train(
-    x_with_bias: Tuple[torch.Tensor, Optional[torch.Tensor]], residual: torch.Tensor, prob: float
-) -> torch.Tensor:
-    return _bias_dropout_add_func(x_with_bias, residual, prob, True)
-@jit_fuser
-def bias_dropout_add_fused_inference(
-    x_with_bias: Tuple[torch.Tensor, Optional[torch.Tensor]], residual: torch.Tensor, prob: float
-) -> torch.Tensor:
-    return _bias_dropout_add_func(x_with_bias, residual, prob, False)
-def get_bias_dropout_add(training, fused):
-
-third_party/Megatron-LM/megatron/core/fusions/fused_weighted_squared_relu.py
-def weighted_squared_relu(x: torch.Tensor, weights: torch.Tensor) -> torch.Tensor:
-    """Element-wise weight applied after Squared-ReLU.
-    Args:
-        x (torch.Tensor):
-def _squared_relu_back(g: torch.Tensor, x: torch.Tensor) -> torch.Tensor:
-    """Gradient of Squared-ReLU.
-    The derivative of ``(ReLU(x))^2`` w.r.t ``x`` is ``2 * ReLU(x)``.
-    """
-    return g * 2 * F.relu(x)
-@jit_fuser
-def weighted_squared_relu_back(g: torch.Tensor, x: torch.Tensor, weights: torch.Tensor):
-def weighted_squared_relu_impl(input: torch.Tensor, weights: torch.Tensor) -> torch.Tensor:
-    """Token-wise weighted Squared-ReLU fusion with optional FP8 storage.
-    Args:
-        input (torch.Tensor):
-
-third_party/Megatron-LM/megatron/core/dist_checkpointing/strategies/async_utils.py
-def _disable_gc():
-
-third_party/Megatron-LM/megatron/core/dist_checkpointing/dict_utils.py
-def extract_matching_values(
-    x: Union[dict, list], predicate: Callable[[Any], bool], return_lists_as_dicts: bool = False
-) -> Tuple[Union[dict, list], Union[dict, list]]:
-    """Return matching and nonmatching values. Keeps hierarchy.
-    Args:
-        x (Union[dict, list]) :
-def diff(x1: Any, x2: Any, prefix: Tuple = ()) -> Tuple[list, list, list]:
-    """Recursive diff of dicts.
-    Args:
-        x1 (object):
-def inspect_types(x: Any, prefix: Tuple = (), indent: int = 4):
-def nested_values(x: Union[dict, list]):
-def nested_items_iter(x: Union[dict, list]):
-def dict_map(f: Callable, d: dict):
-def dict_map_with_key(f: Callable, d: dict):
-def dict_list_map_inplace(f: Callable[[U], V], x: Union[Dict, List, U]):
-def dict_list_map_outplace(f: Callable[[U], V], x: Union[Dict, List, U]) -> Union[Dict, List, V]:
-    """Maps dicts and lists *out-of-place* with a given function."""
-    if isinstance(x, dict):
-def merge(x1: Union[dict, list], x2: Union[dict, list], key: Tuple[Union[str, int], ...] = ()):
-
-third_party/Megatron-LM/megatron/core/fusions/fused_bias_gelu.py
-def bias_gelu(bias, y):
-def bias_gelu_back(g, bias, y):
-
-third_party/Megatron-LM/megatron/core/models/gpt/heterogeneous/heterogeneous_layer_specs.py
-def _get_layer_norm(config: AttentionConfig | MLPConfig, use_te: bool, normalization: str):
-def _get_qk_layernorm(use_te: bool, normalization: str):
-def _get_heterogenous_attention_spec(
-    attn_config: AttentionConfig, use_te: bool, qk_layernorm: bool, normalization: str
-):
-def _get_heterogenous_mlp_spec(mlp_config: MLPConfig, use_te: bool):
-def _get_sharded_state_dict_keys_map(block_config: TransformerBlockConfig, use_te: bool):
-def get_gpt_heterogeneous_layer_spec(
-    config: HeterogeneousTransformerConfig,
-    use_te: bool = False,
-    vp_stage: Optional[int] = None,
-    pp_rank: Optional[int] = None,
-):
-
-third_party/Megatron-LM/megatron/core/fusions/fused_bias_swiglu.py
-def swiglu(y):
-def bias_swiglu(y, bias):
-def weighted_swiglu(y, weights):
-def swiglu_back(g, y):
-def bias_swiglu_back(g, y, bias):
-def weighted_swiglu_back(g, y, weights):
-def bias_swiglu_impl(input, bias, fp8_input_store=False, cpu_offload_input=False):
-def weighted_bias_swiglu_impl(input, bias, weights, fp8_input_store=False):
-
-third_party/Megatron-LM/megatron/core/dist_checkpointing/mapping.py
-def is_main_replica(replica_id: ReplicaId):
-def apply_factories(sharded_state_dict: ShardedStateDict):
-def apply_factory_merges(
-    x1: StateDict, x2: ShardedStateDict, key: Tuple[str, ...] = ()
-) -> StateDict:
-    """Apply merges defined by ShardedTensorFactories *in-place*.
-    Args:
-        x1 (StateDict):
-
-third_party/Megatron-LM/megatron/core/dist_checkpointing/state_dict_utils.py
-def save_preprocess(
-    sharded_state_dict: ShardedStateDict,
-    validate_access_integrity: bool = True,
-    preprocess_common_before_consistancy_check: Callable[[CommonStateDict], StateDict] = None,
-):
-def load_preprocess(sharded_state_dict: ShardedStateDict):
-def filter_out_empty_flatten_tensor(sharded_state_dict: Union[dict, list]):
-
-third_party/Megatron-LM/megatron/core/fusions/fused_pad_routing_map.py
-def _pad_routing_map_kernel(
-    routing_map_ptr, output_ptr, num_tokens, pad_multiple: tl.constexpr, BLOCK_SIZE: tl.constexpr
-):
-def fused_pad_routing_map(routing_map: torch.Tensor, pad_multiple: int) -> torch.Tensor:
-    """Fused version of pad_routing_map.
-    Args:
-        routing_map (torch.Tensor):
-
-third_party/Megatron-LM/megatron/core/models/gpt/experimental_attention_variant_module_specs.py
-def get_gated_delta_net_module_spec(
-    config: TransformerConfig, backend: BackendSpecProvider = None
-) -> ModuleSpec:
-    """Build module spec for GatedDeltaNet attention."""
-    if backend is None:
-        backend = _get_backend_spec_provider(config=config)
-    rms_norm = config.normalization == "RMSNorm"
-    attention = ModuleSpec(
-        module=GatedDeltaNet,
-        submodules=GatedDeltaNetSubmodules(
-            in_proj=backend.column_parallel_layer_norm_linear(),
-            out_norm=backend.layer_norm(rms_norm=rms_norm, for_qk=False),
-            out_proj=backend.row_parallel_linear(),
-        ),
-        metainfo={"fuse_input_layernorm": True},
-    )
-    return attention
-def get_dsa_module_spec_for_backend(
-    config: TransformerConfig, backend: BackendSpecProvider = None
-) -> ModuleSpec:
-    """Helper function to get module spec for Sparse Attention."""
-    assert config.multi_latent_attention, "Currently only MLA supports sparse attention."
-    assert config.qk_l2_norm is False, "qk_l2_norm is not supported with MLA."
-    linear_q_up_proj = (
-        backend.column_parallel_layer_norm_linear()
-        if config.qk_layernorm
-        else backend.column_parallel_linear()
-    )
-    linear_kv_up_proj = (
-        backend.column_parallel_layer_norm_linear()
-        if config.qk_layernorm
-        else backend.column_parallel_linear()
-    )
-    # Because TransformerEngine does not support sparse attention yet, we use local
-    # implementation whether the backend is TransformerEngine or not.
-    core_attention = ModuleSpec(
-        module=DSAttention,
-        submodules=DSAttentionSubmodules(
-            indexer=ModuleSpec(
-                module=DSAIndexer,
-                submodules=DSAIndexerSubmodules(
-                    linear_wq_b=backend.linear(),
-                    linear_wk=backend.linear(),
-                    k_norm=backend.layer_norm(rms_norm=False, for_qk=True),
-                    linear_weights_proj=backend.linear(),
-                ),
-            )
-        ),
-    )
-    attention = ModuleSpec(
-        module=MLASelfAttention,
-        params={"attn_mask_type": AttnMaskType.causal},
-        submodules=MLASelfAttentionSubmodules(
-            linear_q_proj=backend.column_parallel_linear(),
-            linear_q_down_proj=backend.linear(),
-            linear_q_up_proj=linear_q_up_proj,
-            linear_kv_down_proj=backend.linear(),
-            linear_kv_up_proj=linear_kv_up_proj,
-            core_attention=core_attention,
-            linear_proj=backend.row_parallel_linear(),
-            q_layernorm=IdentityOp,
-            kv_layernorm=IdentityOp,
-        ),
-    )
-    return attention
-def get_experimental_attention_variant_module_spec(
-    config: TransformerConfig, backend: BackendSpecProvider = None
-) -> ModuleSpec:
-    """Helper function to get module spec for experimental attention variant"""
-    if backend is None:
-        backend = _get_backend_spec_provider(config=config)
-    if config.experimental_attention_variant == "gated_delta_net":
-        return get_gated_delta_net_module_spec(config=config, backend=backend)
-    else:
-        raise ValueError(
-            f"Invalid experimental attention variant: {config.experimental_attention_variant}"
-        )
-##########
-# Experimental GPT Decoder Block Spec
-##########
-def get_transformer_block_with_experimental_attention_variant_spec(
-    config: TransformerConfig, vp_stage: Optional[int] = None, pp_rank: Optional[int] = None
-) -> TransformerBlockSubmodules:
-    """Build transformer block spec with experimental attention variants (e.g., linear attention).
-    This function constructs a heterogeneous transformer block that supports mixing different
-    attention mechanisms (experimental vs standard) and MLP types (MoE vs dense) across layers.
-    **Note that, this API is a experimental API in the short term, and might be deprecated in the
-    future. In the long run, we will move to a new design that better support hybrid models.**
-    Key Design:
-        1. Attention and MLP patterns: The attention pattern and MLP pattern are orthogonal
-           and determined independently. This allows flexible combinations (e.g., linear attention
-           with MoE, or standard attention with dense MLP).
-           - Attention pattern: derived from `config.linear_attention_freq` or
-             `config.experimental_attention_variant`.
-           - MLP pattern: derived from `config.moe_layer_freq`.
-        2. Per-Layer Spec Construction: Iterates through layers, constructing transformer
-           layer specs based on attention and MLP patterns.
-        3. Pipeline Slicing: Extracts layer specs for the current pipeline stage.
-    Args:
-        config: Transformer configuration containing model hyperparameters and feature flags.
-        vp_stage: Virtual pipeline stage index for interleaved pipeline parallelism.
-        pp_rank: Pipeline model parallel rank.
-    Returns:
-        TransformerBlockSubmodules containing per-layer specs and final layer norm.
-    Note:
-        Currently only supports transformer_engine backend. Kitchen backend can be used as a
-        wrapper with TE fallback for unsupported operations.
-    """
-    backend = _get_backend_spec_provider(config=config)
-    # Get attention patterns and specs
-    experimental_attention_pattern = [0] * config.num_layers
-    if is_linear_attention_variant(config.experimental_attention_variant):
-def is_linear_attention_variant(experimental_attention_variant: Optional[str]) -> bool:
-    """Check if the experimental attention variant is a linear attention variant."""
-    linear_attention_variants = ["gated_delta_net"]
-    return experimental_attention_variant in linear_attention_variants
-def get_moe_layer_pattern(config: TransformerConfig) -> List[int]:
-    """Parse config.moe_layer_freq to get per-layer MoE pattern (1=MoE, 0=dense).
-    - int N: one MoE layer every N layers (e.g., N=2 -> [1,0,1,0,...])
-    - list: use directly as the pattern."""
-    if isinstance(config.moe_layer_freq, int):
-def get_linear_attention_pattern(config: TransformerConfig) -> List[int]:
-    """Parse config.linear_attention_freq to get per-layer attention pattern (1=LA, 0=SDPA).
-    - int N: one SDPA layer every N layers (e.g., N=4 -> [1,1,1,0,1,1,1,0,...])
-    - list: use directly as the pattern."""
-    if isinstance(config.linear_attention_freq, int):
+        token_ids (Tensor):
 
 third_party/Megatron-LM/megatron/core/transformer/custom_layers/batch_invariant_kernels.py
 def _matmul_launch_metadata(
@@ -3160,666 +2360,798 @@ def enable_batch_invariant_mode():
 def disable_batch_invariant_mode():
 def set_batch_invariant_mode(enabled: bool = True):
 
-third_party/Megatron-LM/megatron/core/dist_checkpointing/optimizer.py
-def get_optim_param_to_id_map(optim_params_iter: Iterable[torch.nn.Parameter]) -> Dict[int, int]:
-    """Generate mapping from optimizer param to optimizer state id."""
-    param_mappings = {}
-    for i, param in enumerate(optim_params_iter):
-def get_param_id_to_sharded_param_map(
-    model_sharded_state_dict: ShardedStateDict, optim_params_iter: Iterable[torch.nn.Parameter]
-) -> Dict[int, Union[ShardedTensor, ShardedTensorFactory]]:
-    """Generate mapping from optimizer state ids to model sharded parameters.
-    Args:
-        model_sharded_state_dict: sharded state dict with all model sharded tensors
-            (can have any structure)
-        optim_params_iter: iterable which iterates over model parameters tracked by the optimizer.
-            The iteration must be in the same order as in the optimizer parameters.
-    Returns:
-        Dict[int, Union[ShardedTensor, ShardedTensorFactory]]: mapping from optimizer state ids
-            to model sharded parameters.
+third_party/Megatron-LM/megatron/core/distributed/fsdp/src/megatron_fsdp/megatron_fsdp.py
+def _replace_module_parameter(module, name, new_param):
+
+third_party/Megatron-LM/megatron/core/transformer/module.py
+def param_is_not_shared(param):
+def conversion_helper(val, conversion):
+def fp32_to_float16(val, float16_convertor):
+def float16_to_fp32(val):
+
+third_party/Megatron-LM/megatron/core/pipeline_parallel/schedules.py
+def get_forward_backward_func(pp_size: Optional[int] = None, vp_size: Optional[int] = None):
+def deallocate_output_tensor(out, deallocate_pipeline_outputs=False):
+def custom_backward(output, grad_output):
+def set_current_microbatch(model, microbatch_id):
+def forward_step_calc_loss(
+    model,
+    output_tensor,
+    loss_func,
+    config,
+    vp_stage,
+    collect_non_loss_data,
+    num_microbatches,
+    forward_data_store,
+    cp_group_size=None,
+    is_last_stage=None,
+):
+def forward_step(
+    forward_step_func,
+    data_iterator,
+    model,
+    num_microbatches,
+    input_tensor,
+    forward_data_store,
+    config,
+    cp_group_size,
+    collect_non_loss_data=False,
+    checkpoint_activations_microbatch=None,
+    is_first_microbatch=False,
+    current_microbatch=None,
+    vp_stage=None,
+    is_last_stage=True,
+):
+def backward_step(input_tensor, output_tensor, output_tensor_grad, model_type, config):
+def check_first_val_step(first_val_step, forward_only, cond):
+def forward_backward_no_pipelining(
+    *,
+    forward_step_func,
+    data_iterator: Union[Iterator, List[Iterator]],
+    model: Union[torch.nn.Module, List[torch.nn.Module]],
+    num_microbatches: int,
+    seq_length: int,  # unused
+    micro_batch_size: int,  # unused
+    decoder_seq_length: Optional[int] = None,  # unused
+    forward_only: bool = False,
+    collect_non_loss_data: bool = False,
+    first_val_step: Optional[bool] = None,
+    adjust_tensor_shapes_fn: Optional[Callable] = None,  # unused
+    p2p_communicator: Optional[P2PCommunicator] = None,  # unused
+    pg_collection: Optional[ProcessGroupCollection] = None,
+    force_all_reduce: Optional[bool] = False,
+):
+def clear_embedding_activation_buffer(config, model, is_last_stage):
+def finish_embedding_wgrad_compute(config, embedding_module, is_last_stage, tp_group):
+def get_pp_rank_microbatches(
+    num_microbatches,
+    num_model_chunks,
+    microbatch_group_size_per_vp_stage,
+    forward_only=False,
+    overlap_moe_expert_parallel_comm=False,
+    p2p_communicator: Optional[P2PCommunicator] = None,
+):
+def get_schedule_table(num_microbatches, num_model_chunks, microbatch_group_size_per_vp_stage):
+def forward_backward_pipelining_with_interleaving(
+    *,
+    forward_step_func,
+    data_iterator: Union[Iterator, List[Iterator]],
+    model: Union[torch.nn.Module, List[torch.nn.Module]],
+    num_microbatches: int,
+    seq_length: int,
+    micro_batch_size: int,
+    decoder_seq_length: Optional[int] = None,
+    forward_only: bool = False,
+    collect_non_loss_data: bool = False,
+    first_val_step: Optional[bool] = None,
+    adjust_tensor_shapes_fn: Optional[Callable] = None,  # unused
+    p2p_communicator: Optional[P2PCommunicator] = None,
+    pg_collection: Optional[ProcessGroupCollection] = None,
+    force_all_reduce: Optional[bool] = False,
+):
+def get_tensor_shapes(
+    *,
+    seq_length: int,
+    micro_batch_size: int,
+    decoder_seq_length: int,
+    config,
+    tp_group: torch.distributed.ProcessGroup,
+    cp_group: torch.distributed.ProcessGroup,
+):
+def forward_backward_pipelining_without_interleaving(
+    *,
+    forward_step_func,
+    data_iterator: Union[Iterator, List[Iterator]],
+    model: Union[torch.nn.Module, List[torch.nn.Module]],
+    num_microbatches: int,
+    seq_length: int,
+    micro_batch_size: int,
+    decoder_seq_length: Optional[int] = None,
+    forward_only: bool = False,
+    collect_non_loss_data: bool = False,
+    first_val_step: Optional[bool] = None,
+    adjust_tensor_shapes_fn: Optional[Callable] = None,
+    p2p_communicator: Optional[P2PCommunicator] = None,
+    pg_collection: Optional[ProcessGroupCollection] = None,
+    force_all_reduce: Optional[bool] = False,
+):
+
+third_party/Megatron-LM/megatron/core/dist_checkpointing/strategies/state_dict_saver.py
+def _compare_dataclasses(obj1, obj2):
+def save_state_dict_async_plan(
+    state_dict: STATE_DICT_TYPE,
+    storage_writer: 'FileSystemWriterAsync',
+    process_group: Optional[dist.ProcessGroup] = None,
+    coordinator_rank: int = 0,
+    planner: Optional[Union[SavePlanner, 'MCoreSavePlanner']] = None,
+    cached_ckpt_structure: Optional[Tuple[SavePlan, SavePlan, bool]] = None,
+    loaded_all_plans: Optional[List[SavePlan]] = None,
+) -> Tuple[Tuple['FileSystemWriterAsync', Union[Metadata, None], _DistWrapper], SavePlan, bool]:
     """
-    model_sharded_state_dict, _ = extract_sharded_tensors_and_factories(model_sharded_state_dict)
-    id_to_sharded_param_map = {}
-    param_to_id_map = get_optim_param_to_id_map(optim_params_iter)
-    # If using PyTorch FSDP2 the values in model_sharded_state_dict would
-    # have been converted to local tensors during initialization.
-    # See the make_(tp)_sharded_tensor_for_checkpoint functions.
-    for ten in nested_values(model_sharded_state_dict):
-def make_sharded_optimizer_tensor(
-    model_param: Union[ShardedTensor, ShardedTensorFactory], optim_param: torch.Tensor, prefix: str
-) -> Union[ShardedTensor, ShardedTensorFactory]:
-    """Build a ShardedTensor or ShardedTensorFactory for optimizer param based on model param
+    First stage of saving a state dict to storage.
+    This is an async adjustment of torch.distributed.checkpoint.state_dict_saver.
+    In order to support async save, saving should be split into three parts:
+    1. Planning
+    2. Actual saving
+    3. Finalization
+    Out of these, step (2) *must* happen asynchronously.
+    The first step is realized with this function.
+    The planning part consists of several steps, described here:
+    https://pytorch.org/docs/stable/distributed.checkpoint.html#torch.distributed.checkpoint.SavePlanner
     Args:
-        model_param (Union[ShardedTensor, ShardedTensorFactory]):
-def optim_state_to_sharding_state(
-    optim_state_dict: StateDict,
-    id_to_sharded_param_map: Dict[int, ShardedTensor],
-    exclude_keys: Tuple[str] = (),
-):
-
-third_party/Megatron-LM/megatron/core/fusions/fused_mla_yarn_rope_apply.py
-def _get_thd_token_idx(cu_seqlens, pid_m, seq_num, cp_rank, cp_size):
-def rotary_fwd_q_kernel(
-    Q,
-    COS,
-    SIN,
-    qk_head_dim,
-    emb_dim: tl.constexpr,
-    head_num: tl.constexpr,
-    batch_size,
-    seq_num,
-    cu_seqlens_q,
-    stride_x_seq,
-    stride_x_nheads,
-    cp_rank,
-    cp_size,
-    BLOCK_H: tl.constexpr,
-):
-def rotary_bwd_q_kernel(
-    DO,
-    COS,
-    SIN,
-    qk_head_dim,
-    emb_dim: tl.constexpr,
-    head_num: tl.constexpr,
-    batch_size,
-    seq_num,
-    cu_seqlens_q,
-    stride_x_seq,
-    stride_x_nheads,
-    cp_rank,
-    cp_size,
-    BLOCK_H: tl.constexpr,
-):
-def fused_apply_mla_rope_for_q(
-    t: torch.Tensor,
-    cos: torch.Tensor,
-    sin: torch.Tensor,
-    qk_head_dim: int,
-    emb_dim: int,
-    cu_seqlens_q: Optional[torch.Tensor] = None,
-    cp_rank: int = 0,
-    cp_size: int = 1,
-    rotary_interleaved: bool = False,
-):
-def rotary_fwd_kv_kernel(
-    KV,
-    K_POS_EMB,
-    O_KEY,
-    O_VALUE,
-    COS,
-    SIN,
-    emb_dim: tl.constexpr,
-    k_dim: tl.constexpr,
-    v_dim: tl.constexpr,
-    head_num: tl.constexpr,
-    batch_size,
-    seq_num,
-    cu_seqlens_kv,
-    stride_kv_seq,
-    stride_kv_nheads,
-    stride_emb_seq,
-    stride_k_seq,
-    stride_k_nheads,
-    stride_v_seq,
-    stride_v_nheads,
-    cp_rank,
-    cp_size,
-    BLOCK_H: tl.constexpr,
-):
-def rotary_bwd_kv_kernel(
-    dK,
-    dV,
-    dKV,
-    dEMB,
-    COS,
-    SIN,
-    emb_dim: tl.constexpr,
-    k_dim: tl.constexpr,
-    v_dim: tl.constexpr,
-    head_num: tl.constexpr,
-    batch_size,
-    seq_num,
-    cu_seqlens_kv,
-    stride_dk_seq,
-    stride_dk_nheads,
-    stride_dv_seq,
-    stride_dv_nheads,
-    stride_dkv_seq,
-    stride_dkv_nheads,
-    stride_demb_seq,
-    cp_rank,
-    cp_size,
-    BLOCK_H: tl.constexpr,
-):
-def fused_apply_mla_rope_for_kv(
-    kv: torch.Tensor,
-    k_pos_emb: torch.Tensor,
-    cos: torch.Tensor,
-    sin: torch.Tensor,
-    emb_dim: int,
-    k_dim: int,
-    v_dim: int,
-    cu_seqlens_kv: Optional[torch.Tensor] = None,
-    cp_rank: int = 0,
-    cp_size: int = 1,
-    rotary_interleaved: bool = False,
-):
-
-third_party/Megatron-LM/megatron/core/utils.py
-def null_decorator(*args, **kwargs):
-def experimental_fn(introduced_with_version: str):
-def experimental_cls(introduced_with_version: str):
-def get_torch_version():
-def get_te_version():
-def is_te_min_version(version, check_equality=True):
-def get_torch_version():
-def is_torch_min_version(version, check_equality=True):
-def get_fa_version():
-def is_fa_min_version(version, check_equality=True):
-def get_mamba_version():
-def is_mamba_min_version(version, check_equality=True):
-def get_causal_conv1d_version():
-def is_causal_conv1d_min_version(version, check_equality=True):
-def ensure_divisibility(numerator, denominator):
-def divide(numerator, denominator):
-def deprecate_inference_params(inference_context, inference_params):
-def get_tensor_model_parallel_group_if_none(tp_group, is_expert=False, check_initialized=True):
-def get_pg_size(group=None):
-def get_pg_rank(group=None):
-def get_pg_src_rank(group=None):
-def get_attr_wrapped_model(model, attr, allow_none=True, return_model_obj=False):
-def get_model_type(model):
-def get_model_xattn(model):
-def get_model_config(model):
-def _kernel_make_viewless_tensor(inp, requires_grad):
-def make_viewless_tensor(inp, requires_grad, keep_graph):
-def assert_viewless_tensor(tensor, extra_msg=None):
-def safely_set_viewless_tensor_data(tensor, new_data_tensor):
-def init_method_normal(sigma):
-def scaled_init_method_normal(sigma, num_layers, multiplier=2.0):
-def log_single_rank(logger: logging.Logger, *args: Any, rank: int = 0, **kwargs: Any):
-def log_on_each_pipeline_stage(
-    logger: logging.Logger,
-    *args: Any,
-    tp_group: Optional[torch.distributed.ProcessGroup] = None,
-    dp_cp_group: Optional[torch.distributed.ProcessGroup] = None,
-    **kwargs: Any,
-):
-def check_param_hashes_across_dp_replicas(
-    model: List[torch.nn.Module], cross_check: bool = False
+        state_dict (STATE_DICT_TYPE):
+def verify_global_md_reuse(
+    loaded_all_plans: List[SavePlan], local_plan: SavePlan, rank: int, dist_wrapper: _DistWrapper
 ) -> bool:
-    """Computes hashes of all parameters in model, all-gathers hashes across DP replicas,
-    and then checks for equality between the locally-computed hashes and those of other ranks.
-    NOTE: This function computes SHA-1 hashes on the CPU and thus needs to move all param
-    tensors from GPU to CPU first; as a result, this function is not intended to be called
-    very frequently in the main training loop.
+    """
+    Verifies that global metadata reuse is possible by checking the loaded plans from the
+     checkpoint are consistent, which means we have the same settings when resuming training.
     Args:
-        model (List[torch.nn.Module]):
-def make_tp_sharded_tensor_for_checkpoint(
-    tensor, key, tp_axis=0, replica_id=None, prepend_offsets=(), **kwargs
-):
-def make_sharded_tensor_for_checkpoint(tensor, key, prepend_offsets=(), replica_id=None, **kwargs):
-def get_full_tensor_if_necessary(tensor):
-def to_local_if_dtensor(tensor: Union[torch.Tensor, "DTensor"]) -> torch.Tensor:
-    """Returns the local shard of the given tensor if it is a DTensor."""
-    with torch.no_grad():
-def get_data_parallel_group_if_dtensor(
-    tensor: Union[torch.Tensor, "DTensor"], data_parallel_group: "ProcessGroup" = None
-) -> Optional["ProcessGroup"]:
-    """Gets the data parallel group of the given tensor if it is a DTensor."""
-    if HAVE_DTENSOR and isinstance(tensor, DTensor):
-def prepare_input_tensors_for_wgrad_compute(grad_output, all_gathered_input):
-def drain_embedding_wgrad_compute(
-    config, embedding_activation_buffer, grad_output_buffer, weight, tp_group
-):
-def local_multi_tensor_applier(op, noop_flag_buffer, tensor_lists, *args):
-def local_multi_tensor_l2_norm(chunk_size, noop_flag, tensor_lists, per_tensor, *args):
-def local_multi_tensor_scale(chunk_size, noop_flag, tensor_lists, scale):
-def is_submodule(module, parent_module, strict=True):
-def get_batch_on_this_cp_rank(
-    batch: Dict[str, Any], cp_group: Optional[torch.distributed.ProcessGroup] = None
-):
-def get_thd_batch_on_this_cp_rank(
-    batch: Dict[str, Any],
-    cu_seqlens: torch.Tensor,
-    cu_seqlens_padded: torch.Tensor,
-    max_seqlen: torch.Tensor,
-    cp_size: Optional[int] = None,
-    cp_rank: Optional[int] = None,
-):
-def get_batch_on_this_hybrid_cp_rank(
-    batch: Dict[str, Any],
-    local_cp_size: int,
-    cp_group: Optional[torch.distributed.ProcessGroup] = None,
-):
-def configure_nvtx_profiling(enabled: bool) -> None:
-    """Configure NVTX range profiling to be enabled or disabled.
+        loaded_all_plans: List[SavePlan], The loaded plans from the checkpoint
+         (stored in checkpoint metadata).
+        local_plan: SavePlan, The local save plan.
+        rank: Current process rank.
+        dist_wrapper (_DistWrapper):
+def save_state_dict_async_finalize(
+    storage_writer: 'FileSystemWriterAsync', global_metadata: Metadata, dist_wrapper: _DistWrapper
+) -> None:
+    """
+    Finalization of save_state_dict_async_plan.
+    The input arguments are the same as the save_state_dict_async_plan output,
+    the `write_results` are retrieved from the storage_writer.
     Args:
-        enabled (bool):
-def _nvtx_range_get_func_path():
-def nvtx_range_push(msg=None, suffix=None) -> None:
-    """Push NVTX range onto stack. If msg is not provided, use the calling function's path.
-    Args:
-        msg (str, optional):
-def nvtx_range_pop(msg=None, suffix=None) -> None:
-    """Pop NVTX range from stack. If msg is not provided, use the calling function's path.
-    Args:
-        msg (str, optional):
-def _nvtx_decorator_get_func_path(func):
-def nvtx_decorator(message: Optional[str] = None, color: Optional[str] = None):
-def unwrap_model(model, module_instances=None):
-def get_asyncio_loop(loop: asyncio.AbstractEventLoop | None = None) -> asyncio.AbstractEventLoop:
-    """Creates an asyncio loop if necessary and then returns the current asyncio loop."""
-    global _ASYNC_IO_LOOP
-    if loop is None:
-        try:
-            loop = asyncio.get_running_loop()
-        except RuntimeError as e:
-            if _ASYNC_IO_LOOP is not None:
-                return _ASYNC_IO_LOOP
-            else:
-                _ASYNC_IO_LOOP = loop = asyncio.new_event_loop()
-                asyncio.set_event_loop(loop)
-    return loop
-def is_using_quantization_scales(config):
-def trace_async_exceptions(func: Optional[Callable] = None, *, verbose: bool = False):
-def get_mamba_inference_state_config_from_model(model) -> Optional["MambaInferenceStateConfig"]:
-    """Returns Mamba inference state config from the model if it is a hybrid model."""
-    from megatron.core.inference.contexts.attention_context.mamba_metadata import (
-        MambaInferenceStateConfig,
+        storage_writer (FileSystemWriterAsync):
+
+third_party/Megatron-LM/megatron/core/dist_checkpointing/strategies/base.py
+def get_default_strategy(action: StrategyAction, backend: str, version: int):
+def register_default_strategy(
+    action: StrategyAction,
+    backend: str,
+    version: int,
+    strategy: Union['SaveStrategyBase', 'LoadStrategyBase'],
+):
+
+third_party/Megatron-LM/megatron/core/pipeline_parallel/hybrid_cp_schedule.py
+def hybrid_context_parallel_forward_backward(
+    forward_step_func,
+    data_iterator,
+    model,
+    num_microbatches,
+    input_tensor,
+    output_tensor_grad,
+    forward_data_store,
+    config,
+    collect_non_loss_data,
+    first_val_step,
+    forward_only,
+    no_sync_func,
+    total_num_tokens,
+    check_first_val_step,
+    model_type,
+):
+
+third_party/Megatron-LM/megatron/core/models/gpt/experimental_attention_variant_module_specs.py
+def get_gated_delta_net_module_spec(
+    config: TransformerConfig, backend: BackendSpecProvider = None
+) -> ModuleSpec:
+    """Build module spec for GatedDeltaNet attention."""
+    if backend is None:
+        backend = _get_backend_spec_provider(config=config)
+    rms_norm = config.normalization == "RMSNorm"
+    attention = ModuleSpec(
+        module=GatedDeltaNet,
+        submodules=GatedDeltaNetSubmodules(
+            in_proj=backend.column_parallel_layer_norm_linear(),
+            out_norm=backend.layer_norm(rms_norm=rms_norm, for_qk=False),
+            out_proj=backend.row_parallel_linear(),
+        ),
+        metainfo={"fuse_input_layernorm": True},
     )
-    from megatron.core.ssm.mamba_hybrid_layer_allocation import Symbols
-    decoder = get_attr_wrapped_model(model, "decoder")
-    layer_type_list = getattr(decoder, "layer_type_list", None)
-    if layer_type_list is not None and Symbols.MAMBA in layer_type_list:
-        (mamba_conv_states_shape, mamba_ssm_states_shape) = decoder.mamba_state_shapes_per_request()
-        return MambaInferenceStateConfig(
-            layer_type_list=layer_type_list,
-            mamba_conv_states_shape=mamba_conv_states_shape,
-            mamba_ssm_states_shape=mamba_ssm_states_shape,
+    return attention
+def get_dsa_module_spec_for_backend(
+    config: TransformerConfig, backend: BackendSpecProvider = None
+) -> ModuleSpec:
+    """Helper function to get module spec for Sparse Attention."""
+    assert config.multi_latent_attention, "Currently only MLA supports sparse attention."
+    assert config.qk_l2_norm is False, "qk_l2_norm is not supported with MLA."
+    linear_q_up_proj = (
+        backend.column_parallel_layer_norm_linear()
+        if config.qk_layernorm
+        else backend.column_parallel_linear()
+    )
+    linear_kv_up_proj = (
+        backend.column_parallel_layer_norm_linear()
+        if config.qk_layernorm
+        else backend.column_parallel_linear()
+    )
+    # Because TransformerEngine does not support sparse attention yet, we use local
+    # implementation whether the backend is TransformerEngine or not.
+    core_attention = ModuleSpec(
+        module=DSAttention,
+        submodules=DSAttentionSubmodules(
+            indexer=ModuleSpec(
+                module=DSAIndexer,
+                submodules=DSAIndexerSubmodules(
+                    linear_wq_b=backend.linear(),
+                    linear_wk=backend.linear(),
+                    k_norm=backend.layer_norm(rms_norm=False, for_qk=True),
+                    linear_weights_proj=backend.linear(),
+                ),
+            )
+        ),
+    )
+    attention = ModuleSpec(
+        module=MLASelfAttention,
+        params={"attn_mask_type": AttnMaskType.causal},
+        submodules=MLASelfAttentionSubmodules(
+            linear_q_proj=backend.column_parallel_linear(),
+            linear_q_down_proj=backend.linear(),
+            linear_q_up_proj=linear_q_up_proj,
+            linear_kv_down_proj=backend.linear(),
+            linear_kv_up_proj=linear_kv_up_proj,
+            core_attention=core_attention,
+            linear_proj=backend.row_parallel_linear(),
+            q_layernorm=IdentityOp,
+            kv_layernorm=IdentityOp,
+        ),
+    )
+    return attention
+def get_experimental_attention_variant_module_spec(
+    config: TransformerConfig, backend: BackendSpecProvider = None
+) -> ModuleSpec:
+    """Helper function to get module spec for experimental attention variant"""
+    if backend is None:
+        backend = _get_backend_spec_provider(config=config)
+    if config.experimental_attention_variant == "gated_delta_net":
+        return get_gated_delta_net_module_spec(config=config, backend=backend)
+    else:
+        raise ValueError(
+            f"Invalid experimental attention variant: {config.experimental_attention_variant}"
         )
-    return None
-# ============================================================================
-# Backward Compatibility Decorators
-# ============================================================================
-def deprecated(
-    version: str,
-    removal_version: Optional[str] = None,
-    alternative: Optional[str] = None,
-    reason: Optional[str] = None,
-) -> Callable:
-    """
-    Mark a function as deprecated.
-    This decorator:
-    1. Adds deprecation metadata to the function
-    2. Issues a DeprecationWarning when the function is called
-    3. Allows the compatibility checker to track deprecation lifecycle
+##########
+# Experimental GPT Decoder Block Spec
+##########
+def get_transformer_block_with_experimental_attention_variant_spec(
+    config: TransformerConfig, vp_stage: Optional[int] = None, pp_rank: Optional[int] = None
+) -> TransformerBlockSubmodules:
+    """Build transformer block spec with experimental attention variants (e.g., linear attention).
+    This function constructs a heterogeneous transformer block that supports mixing different
+    attention mechanisms (experimental vs standard) and MLP types (MoE vs dense) across layers.
+    **Note that, this API is a experimental API in the short term, and might be deprecated in the
+    future. In the long run, we will move to a new design that better support hybrid models.**
+    Key Design:
+        1. Attention and MLP patterns: The attention pattern and MLP pattern are orthogonal
+           and determined independently. This allows flexible combinations (e.g., linear attention
+           with MoE, or standard attention with dense MLP).
+           - Attention pattern: derived from `config.linear_attention_freq` or
+             `config.experimental_attention_variant`.
+           - MLP pattern: derived from `config.moe_layer_freq`.
+        2. Per-Layer Spec Construction: Iterates through layers, constructing transformer
+           layer specs based on attention and MLP patterns.
+        3. Pipeline Slicing: Extracts layer specs for the current pipeline stage.
     Args:
-        version: Version where deprecation starts (e.g., "1.0.0")
-        removal_version: Version where function will be removed (e.g., "2.0.0")
-        alternative: Name of the recommended replacement function
-        reason: Optional explanation for the deprecation
+        config: Transformer configuration containing model hyperparameters and feature flags.
+        vp_stage: Virtual pipeline stage index for interleaved pipeline parallelism.
+        pp_rank: Pipeline model parallel rank.
     Returns:
-        Decorator function
-    Example:
-        @deprecated(
-            version="1.0.0",
-            removal_version="2.0.0",
-            alternative="new_train_model",
-            reason="Improved performance and cleaner API"
+        TransformerBlockSubmodules containing per-layer specs and final layer norm.
+    Note:
+        Currently only supports transformer_engine backend. Kitchen backend can be used as a
+        wrapper with TE fallback for unsupported operations.
+    """
+    backend = _get_backend_spec_provider(config=config)
+    # Get attention patterns and specs
+    experimental_attention_pattern = [0] * config.num_layers
+    if is_linear_attention_variant(config.experimental_attention_variant):
+def is_linear_attention_variant(experimental_attention_variant: Optional[str]) -> bool:
+    """Check if the experimental attention variant is a linear attention variant."""
+    linear_attention_variants = ["gated_delta_net"]
+    return experimental_attention_variant in linear_attention_variants
+def get_moe_layer_pattern(config: TransformerConfig) -> List[int]:
+    """Parse config.moe_layer_freq to get per-layer MoE pattern (1=MoE, 0=dense).
+    - int N: one MoE layer every N layers (e.g., N=2 -> [1,0,1,0,...])
+    - list: use directly as the pattern."""
+    if isinstance(config.moe_layer_freq, int):
+def get_linear_attention_pattern(config: TransformerConfig) -> List[int]:
+    """Parse config.linear_attention_freq to get per-layer attention pattern (1=LA, 0=SDPA).
+    - int N: one SDPA layer every N layers (e.g., N=4 -> [1,1,1,0,1,1,1,0,...])
+    - list: use directly as the pattern."""
+    if isinstance(config.linear_attention_freq, int):
+
+third_party/Megatron-LM/megatron/core/dist_checkpointing/strategies/common.py
+def register_default_common_strategies():
+
+third_party/Megatron-LM/megatron/core/transformer/heterogeneous/linear_replacements.py
+def _gather_from_tensor_parallel_region(x: Tensor, config: TransformerConfig) -> Tensor:
+    if get_tensor_model_parallel_world_size() > 1:
+        if config.sequence_parallel:
+            # pad hidden dimension (last dimension) with zeros such that the valid data is placed in
+            # indices [tp_rank * hidden/tp_size, (tp_rank+1) * hidden/tp_size),
+            # and zeros fill the other parts.
+            output_size = config.hidden_size
+            output_size_per_partition = divide(output_size, get_tensor_model_parallel_world_size())
+            pad_before = get_tensor_model_parallel_rank() * output_size_per_partition
+            pad_after = output_size - pad_before - output_size_per_partition
+            pad_shape = [0] * (x.ndim - 1) * 2 + [pad_before, pad_after]
+            x = F.pad(x, pad_shape, "constant", 0)
+            x = reduce_scatter_to_sequence_parallel_region(x)
+        else:
+            x = gather_from_tensor_model_parallel_region(x)
+    return x
+if HAVE_TE:
+    class TELayerNormColumnParallelLinearGathered(TELayerNormColumnParallelLinear):
+
+third_party/Megatron-LM/megatron/core/dist_checkpointing/strategies/async_utils.py
+def _disable_gc():
+
+third_party/Megatron-LM/megatron/core/pipeline_parallel/p2p_communication.py
+def _batched_p2p_ops(
+    *,
+    tensor_send_prev: Optional[torch.Tensor],
+    tensor_recv_prev: Optional[torch.Tensor],
+    tensor_send_next: Optional[torch.Tensor],
+    tensor_recv_next: Optional[torch.Tensor],
+    group: torch.distributed.ProcessGroup,
+    prev_pipeline_rank: int,
+    next_pipeline_rank: int,
+):
+def _p2p_ops(
+    *,
+    tensor_send_prev: Optional[torch.Tensor],
+    tensor_recv_prev: Optional[torch.Tensor],
+    tensor_send_next: Optional[torch.Tensor],
+    tensor_recv_next: Optional[torch.Tensor],
+    group: torch.distributed.ProcessGroup,
+    prev_pipeline_rank: int,
+    next_pipeline_rank: int,
+):
+def is_single_shape(x) -> bool:
+    """Check if the input is a single shape."""
+    if isinstance(x, torch.Size):
+
+third_party/Megatron-LM/megatron/core/resharding/utils.py
+def _get_rank_in_group(global_rank: int, group_ranks: list[int]) -> int:
+    try:
+        return group_ranks.index(global_rank)
+    except ValueError:
+        raise ValueError(
+            f"Rank {global_rank} not found in process group {group_ranks}. "
+            f"This likely indicates a configuration mismatch."
         )
-        def old_train_model(config):
-def internal_api(func: Callable) -> Callable:
+def _detect_expert_index_from_param_name(param_name: str) -> Optional[int]:
+    """Extract expert index from parameter name for TEGroupedMLP per-expert tensors."""
+    for part in param_name.split('.'):
+def assign_ep_resolved_name_inplace(
+    meta: ParameterMetadata, *, base_name: str | None = None
+) -> None:
     """
-    Mark a function or class as internal API (not for external use).
-    Use this decorator for:
-    - Internal APIs not intended for public consumption
-    - Experimental features that may change without notice
-    - Implementation details that are not part of the stable API
-    Objects marked with this decorator will be exempt from backward
-    compatibility checks.
-    Args:
-        func: The function or class to mark as internal
-    Returns:
-        The original function/class with an internal API marker
-    Example:
-        @internal_api
-        def _internal_helper():
-def experimental_api(func: Callable) -> Callable:
+    EP-only canonicalization for per-expert parameters.
+    Under Expert Parallelism (EP), each rank owns a subset of experts with local indices
+    (e.g., rank 1 has "weight0" locally, but it's actually global expert 4). The raw param
+    name can't be used to match across source/destination because the same local name refers
+    to different global experts on different ranks. This function remaps local expert indices
+    to global indices in `resolved_name` and sets `global_expert_index`.
+    Effects:
+    - Sets meta.resolved_name (defaults to base_name/meta.name for non-EP).
+    - Sets meta.global_expert_index for per-expert parameters; otherwise leaves it as None.
     """
-    Mark a function or class as experimental API.
-    Use this decorator for:
-    - Experimental features that may change without notice
-    - New APIs under active development
-    - Features that are not yet stable
-    Objects marked with this decorator will be exempt from backward
-    compatibility checks, allowing rapid iteration during development.
-    Args:
-        func: The function or class to mark as experimental
-    Returns:
-        The original function/class with an experimental API marker
-    Example:
-        @experimental_api
-        def new_experimental_feature():
-
-third_party/Megatron-LM/megatron/core/fusions/fused_indices_converter.py
-def _indices_to_multihot_kernel(
-    indices_ptr,
-    probs_in_indices_ptr,
-    multihot_indices_ptr,  # bool
-    probs_in_multihot_ptr,
-    position_map_ptr,
-    num_of_local_experts: tl.constexpr,
-    num_of_local_experts_next_power_of_2: tl.constexpr,
-    topk: tl.constexpr,
-    topk_next_power_of_2: tl.constexpr,
-    BLOCK_SIZE: tl.constexpr,
-):
-def _multihot_to_indices_kernel(
-    probs_in_multihot_ptr,
-    position_map_ptr,
-    probs_indices_ptr,
-    num_of_local_experts: tl.constexpr,
-    num_of_local_experts_next_power_of_2: tl.constexpr,
-    topk: tl.constexpr,
-    topk_next_power_of_2: tl.constexpr,
-    BLOCK_SIZE: tl.constexpr,
-):
-def fused_indices_to_multihot(indices, probs_indices, num_of_local_experts):
-
-third_party/Megatron-LM/megatron/core/tokenizers/text/utils/build_tokenizer.py
-def build_tokenizer(args):
-
-third_party/Megatron-LM/megatron/core/fusions/fused_bias_geglu.py
-def geglu(y):
-def bias_geglu(bias, y):
-def geglu_back(g, y):
-def bias_geglu_back(g, y, bias):
-def bias_geglu_impl(input, bias):
-def quick_gelu(y: torch.Tensor) -> torch.Tensor:
-    """Sigmoid approximation of gelu"""
-    return y * torch.sigmoid(1.702 * y)
-@jit_fuser
-def quick_geglu(y: torch.Tensor, linear_offset: float = 0.0) -> torch.Tensor:
-    """Performs Quick-GELU-based GEGLU activation : quick_gelu(y1) * (y2 + offset).
-    Args:
-        y: Input tensor split into two halves on the last dimension.
-        linear_offset: Optional linear offset added to the second half before gating.
-    Returns:
-        Tensor after applying the GEGLU activation.
+    base = meta.name if base_name is None else base_name
+    meta.resolved_name = base
+    meta.global_expert_index = None
+    if not meta.is_ep:
+        return
+    local_idx = _detect_expert_index_from_param_name(base)
+    if local_idx is None:
+        # Fused experts tensor: leave name as-is; TP planner will handle slicing
+        return
+    ep_group = meta.expert_parallel_group_ranks
+    ep_size = len(ep_group)
+    ep_local_rank = ep_group.index(meta.owner_rank)
+    experts_per_rank = meta.num_experts // ep_size
+    global_idx = ep_local_rank * experts_per_rank + local_idx
+    meta.global_expert_index = global_idx
+    # Replace trailing integer in "weightK"/"biasK" with global_idx
+    parts = base.split('.')
+    new_parts = []
+    for p in parts:
+        if p.startswith('weight') and len(p) > len('weight') and p[len('weight') :
+def assign_resolved_name_inplace(
+    meta: ParameterMetadata,
+    *,
+    layer_module_prefix_map: Mapping[str, str] | None = None,
+    base_name: str | None = None,
+) -> None:
+    """Set meta.resolved_name so the planner can match the same weights across models.
+    It rewrites PP layer indices to global layer indices (when layer_module_prefix_map is
+    provided) and
+    rewrites EP per-expert indices (weightK/biasK) to global expert indices.
     """
-    y_1, y_2 = torch.chunk(y, 2, dim=-1)
-    return quick_gelu(y_1) * (y_2 + linear_offset)
-@jit_fuser
-def weighted_quick_geglu(
-    y: torch.Tensor, weights: torch.Tensor, linear_offset: float = 0.0
-) -> torch.Tensor:
-    """Token-wise-weighted Quick-GEGLU activation.
-    The weights tensor is expected to have the same first-dimension length as ``y`` and a trailing
-    singleton dimension so that it broadcasts over the feature dimension.
+    name = meta.name if base_name is None else base_name
+    if layer_module_prefix_map:
+        name = _resolve_global_layer_number_in_name(name, layer_module_prefix_map)
+    assign_ep_resolved_name_inplace(meta, base_name=name)
+def _build_layer_module_prefix_map(module: torch.nn.Module) -> dict[str, str]:
+    """Build a mapping local_module_prefix -> global_module_prefix for PP layer modules.
+    Megatron assigns a global, 1-indexed layer_number to each transformer layer module at
+    construction time (including PP/VPP/layout offsets). We convert that to the 0-indexed naming
+    convention used in parameter names and build a map such as:
+    - "decoder.layers.0" → "decoder.layers.16"  (if layer_number == 17)
     """
-    dtype = y.dtype
-    res = quick_geglu(y, linear_offset) * weights
-    return res.to(dtype)
-# gradient of sigmoid approximation of gelu
-@jit_fuser
-def quick_geglu_back(g, y, linear_offset: float = 0.0) -> torch.Tensor:
-    """Backward helper for Quick-GEGLU.
-    Args:
-        g (torch.Tensor):
-def weighted_quick_geglu_back(g, y, weights, linear_offset: float = 0.0):
-def weighted_bias_quick_geglu(
-    y: torch.Tensor, bias: torch.Tensor, weights: torch.Tensor, linear_offset: float = 0.0
-) -> torch.Tensor:
-    """Token-wise weighted Quick-GEGLU activation with bias.
-    Args:
-        y: Input tensor before bias addition.
-        bias: Bias tensor broadcastable to `y`.
-        weights: Weight tensor with shape `[tokens, 1]` broadcasting over feature dim.
-        linear_offset: Optional linear offset for the second half before gating.
-    Returns:
-        Activated tensor with same dtype as `y`.
+    prefix_map: dict[str, str] = {}
+    for module_name, submodule in module.named_modules():
+def _resolve_global_layer_number_in_name(
+    name: str, layer_module_prefix_map: Mapping[str, str]
+) -> str:
+    """Rewrite a parameter name to use global layer indices (PP-aware).
+    Given a parameter name like decoder.layers.0.self_attention..., this function rewrites
+    the decoder.layers.0 prefix to the corresponding global layer index using the owning
+    layer module's layer_number.
+    Implementation:
+    - Build a {local_prefix -> global_prefix} map once (outside the per-parameter loop).
+    - Perform a longest-prefix match replacement so we only rewrite the module path portion.
     """
-    dtype = y.dtype
-    res = quick_geglu(y + bias, linear_offset) * weights
-    return res.to(dtype)
-@jit_fuser
-def weighted_bias_quick_geglu_back(g, y, bias, weights, linear_offset: float = 0.0):
-def weighted_bias_quick_geglu_impl(
-    input, bias, weights, fp8_input_store=False, linear_offset=0.0, clamp_value=None
-):
-
-third_party/Megatron-LM/megatron/core/distributed/fsdp/src/megatron_fsdp/param_and_grad_buffer.py
-def _p_assert(cond: Any, s: str, raise_assertion_error: bool = True) -> None:
-    """Alternate to ``assert`` when in the backward context to print the error
-    message ``s`` since otherwise, it is swallowed.
-    """
-    if not cond:
-        logger.error(s)
-        logger.error(''.join(traceback.format_stack()))
-        if raise_assertion_error:
-            raise AssertionError(s)
-def _alloc_storage(tensor: torch.Tensor, size: torch.Size) -> None:
-    """
-    Allocate storage for ``tensor`` with the given size.
-    Returns:
-        bool: ``True`` if this method allocated storage and ``False`` if the
-        storage was already allocated.
-    """
-    with torch.no_grad():
-def _free_storage(tensor: torch.Tensor):
-def _pad(number_to_be_padded: int, divisor: int) -> int:
-    return int(math.ceil(number_to_be_padded / divisor) * divisor)
-def build_data_parallel_buffer_index(
-    elements: List[torch.Size],
-    data_parallel_rank: int,
-    data_parallel_world_size: int,
-    is_data_distributed: bool,
-    ddp_config: DistributedDataParallelConfig,
-    bucket_id: int = 0,
-    chunk_size_factor: int = 1,
-) -> Tuple[List[tuple], BucketIndex, ShardBucketIndex]:
-    """
-    Assuming that all input tensor elements contiguously compose a global
-    buffer, give the index range of every tensor, the bucket in the buffer,
-    and the (distributed) shard within the bucket. Note that the global bucket
-    buffer is only temporarily allocated, but is abstractly tracked via indices
-    deduced from the number of raw parameters assigned to this buffer / bucket.
-    Args:
-        elements (List[torch.Size]):
-def _get_dp_buffer_shard_bucket_index(
-    bucket_index: BucketIndex,
-    is_data_distributed: bool,
-    data_parallel_world_size: int,
-    data_parallel_rank: int,
-) -> ShardBucketIndex:
-    """
-    Build the data parallel buffer shard bucket index from the bucket index.
-    Args:
-        bucket_index (BucketIndex):
-def _get_parameter_groups(
-    module: torch.nn.Module,
-    policy: BucketingPolicy,
-    meta_device_init_fp8_params: dict,
-    bucket_group_by_fsdp_unit: bool = True,
-):
-def gradient_reduce_preprocessing(grad_data, scaling_factor, ddp_config):
-def check_gpu_memory(threshold=0.9):
-def override_sharded_param_methods_with_safety_checks(params, all_gather_pipeline):
-def _dtype_size(dtype: torch.dtype) -> int:
-    """
-    Get the size of the dtype.
-    Args:
-        dtype (torch.dtype):
-def to_local_if_dtensor(tensor):
-def _get_fsdp_tensor_spec(
-    param, dist_index: FSDPDistributedIndex, is_sharded_param, is_expert_param
-):
-def make_fsdp_dtensor(
-    local_tensor: torch.Tensor,
+    if not layer_module_prefix_map:
+        return name
+    parts = name.split('.')
+    for i in range(len(parts), 0, -1):
+def extract_param_metadata(
     param: torch.nn.Parameter,
-    dist_index: FSDPDistributedIndex,
-    is_sharded_param: bool = True,
-    is_expert_param: bool = False,
-    run_check: bool = False,
-    update_uneven_dtensor_chunk_meta: bool = False,
-    force_sync_tp_duplicated_param: bool = False,
+    param_name: str,
+    owner_rank: int,
+    pg_collection,
+    num_experts: Optional[int] = None,
+    layer_module_prefix_map: Mapping[str, str] | None = None,
+) -> ParameterMetadata:
+    """Extract metadata from a parameter for cross-rank communication."""
+    # TP flags from attributes (set by Megatron linear layers)
+    is_tp = bool(getattr(param, 'tensor_model_parallel', False))
+    partition_dim = int(getattr(param, 'partition_dim', 0))
+    partition_stride = int(getattr(param, 'partition_stride', 1))
+    # SwiGLU/GLU compatibility: For gated linear units, fc1 stores interleaved [gate, up] portions
+    # and requires partition_stride=2 for correct resharding. New models set this at construction
+    # time (MLP sets partition_stride=2 on weight when gated_linear_unit=True). For legacy models
+    # where stride=1 was left as default, we apply stride=2 as a fallback for fc1 parameters.
+    # This is safe because: (1) gated models need it, and (2) non-gated models have smaller fc1
+    # and stride doesn't affect single-block transfers.
+    # if 'mlp.linear_fc1' in param_name and is_tp and partition_stride == 1:
+    #     partition_stride = 2
+    # EP detection: Megatron convention - expert params are not allreduced
+    is_ep = not bool(getattr(param, 'allreduce', True))
+    tensor_parallel_group_ranks: list[int] | None = None
+    expert_parallel_group_ranks: list[int] | None = None
+    data_parallel_group_ranks: list[int] | None = None
+    pipeline_parallel_group_ranks: list[int] | None = None
+    if is_ep:
+        expert_parallel_group_ranks = dist.get_process_group_ranks(pg_collection.ep)
+        # For MoE params, prefer expert TP group when available, else regular TP
+        if is_tp and hasattr(pg_collection, 'expt_tp') and pg_collection.expt_tp is not None:
+            tensor_parallel_group_ranks = dist.get_process_group_ranks(pg_collection.expt_tp)
+        elif is_tp and hasattr(pg_collection, 'tp') and pg_collection.tp is not None:
+            tensor_parallel_group_ranks = dist.get_process_group_ranks(pg_collection.tp)
+        data_parallel_group_ranks = dist.get_process_group_ranks(pg_collection.dp)
+    elif is_tp:
+        # Non-EP: use regular TP group
+        if hasattr(pg_collection, 'tp') and pg_collection.tp is not None:
+            tensor_parallel_group_ranks = dist.get_process_group_ranks(pg_collection.tp)
+        data_parallel_group_ranks = dist.get_process_group_ranks(pg_collection.dp)
+    else:
+        data_parallel_group_ranks = dist.get_process_group_ranks(pg_collection.dp)
+    if hasattr(pg_collection, 'pp') and pg_collection.pp is not None:
+        pipeline_parallel_group_ranks = dist.get_process_group_ranks(pg_collection.pp)
+    else:
+        pipeline_parallel_group_ranks = list(range(dist.get_world_size()))
+    meta = ParameterMetadata(
+        name=param_name,
+        shape=tuple(param.shape),
+        dtype=param.dtype,
+        element_size=param.element_size(),
+        is_tp=is_tp,
+        partition_dim=partition_dim,
+        partition_stride=partition_stride,
+        is_ep=is_ep,
+        num_experts=num_experts,
+        owner_rank=owner_rank,
+        tensor_parallel_group_ranks=tensor_parallel_group_ranks,
+        expert_parallel_group_ranks=expert_parallel_group_ranks,
+        data_parallel_group_ranks=data_parallel_group_ranks,
+        pipeline_parallel_group_ranks=pipeline_parallel_group_ranks,
+    )
+    assign_resolved_name_inplace(
+        meta, layer_module_prefix_map=layer_module_prefix_map, base_name=param_name
+    )
+    return meta
+def select_src_metadata_balanced(
+    src_meta_list: list[ParameterMetadata], dst_metadata: ParameterMetadata, dst_rank: int
+) -> ParameterMetadata:
+    """Choose a representative source `ParameterMetadata` for a destination rank.
+    The selected metadata provides topology information (TP/EP/DP group ranks) that the
+    LCM transfer planner uses to compute actual source ranks and slices. This function
+    doesn't perform transfers itself - it just picks which source configuration to use
+    as reference for planning.
+    Two scenarios for EP-sharded parameters:
+    1. Non-collocated mode (same EP size, different rank numbering):
+
+third_party/Megatron-LM/megatron/core/inference/text_generation_server/endpoints/common.py
+def send_do_generate():
+
+third_party/Megatron-LM/megatron/core/inference/text_generation_server/endpoints/completions.py
+def detokenize(prompt, tok) -> list[str]:
+    """Detokenizes the given prompt."""
+    if isinstance(prompt, str):
+
+third_party/Megatron-LM/megatron/core/dist_checkpointing/state_dict_utils.py
+def save_preprocess(
+    sharded_state_dict: ShardedStateDict,
+    validate_access_integrity: bool = True,
+    preprocess_common_before_consistancy_check: Callable[[CommonStateDict], StateDict] = None,
+):
+def load_preprocess(sharded_state_dict: ShardedStateDict):
+def filter_out_empty_flatten_tensor(sharded_state_dict: Union[dict, list]):
+
+third_party/Megatron-LM/megatron/core/inference/text_generation_server/tokenization.py
+def tokenize_prompts(
+    tokenizer, prompts=None, tokens_to_generate=None, add_BOS=None, rank=0, data_parallel=False
+):
+def _tokenize_prompts_and_batch(tokenizer, prompts, tokens_to_generate, add_BOS):
+
+third_party/Megatron-LM/megatron/core/models/T5/t5_spec.py
+def encoder_model_with_transformer_engine_default_spec() -> ModuleSpec:
+    """T5 encoder TE spec (uses Transformer Engine components)."""
+    return ModuleSpec(
+        module=TransformerLayer,
+        submodules=TransformerLayerSubmodules(
+            self_attention=ModuleSpec(
+                module=SelfAttention,
+                params={"attn_mask_type": AttnMaskType.padding},
+                submodules=SelfAttentionSubmodules(
+                    linear_qkv=not_none(TELayerNormColumnParallelLinear),
+                    core_attention=not_none(TEDotProductAttention),
+                    linear_proj=TERowParallelLinear,
+                    q_layernorm=IdentityOp,
+                    k_layernorm=IdentityOp,
+                ),
+            ),
+            self_attn_bda=get_bias_dropout_add,
+            mlp=ModuleSpec(
+                module=MLP,
+                submodules=MLPSubmodules(
+                    linear_fc1=not_none(TELayerNormColumnParallelLinear),
+                    linear_fc2=not_none(TERowParallelLinear),
+                ),
+            ),
+            mlp_bda=get_bias_dropout_add,
+        ),
+    )
+def decoder_model_with_transformer_engine_default_spec() -> ModuleSpec:
+    """T5 decoder TE spec (uses Transformer Engine components)."""
+    return ModuleSpec(
+        module=TransformerLayer,
+        submodules=TransformerLayerSubmodules(
+            self_attention=ModuleSpec(
+                module=SelfAttention,
+                params={"attn_mask_type": AttnMaskType.causal},
+                submodules=SelfAttentionSubmodules(
+                    linear_qkv=not_none(TELayerNormColumnParallelLinear),
+                    core_attention=not_none(TEDotProductAttention),
+                    linear_proj=TERowParallelLinear,
+                    q_layernorm=IdentityOp,
+                    k_layernorm=IdentityOp,
+                ),
+            ),
+            self_attn_bda=get_bias_dropout_add,
+            pre_cross_attn_layernorm=not_none(TENorm),
+            cross_attention=ModuleSpec(
+                module=CrossAttention,
+                params={"attn_mask_type": AttnMaskType.padding},
+                submodules=CrossAttentionSubmodules(
+                    linear_q=not_none(TEColumnParallelLinear),
+                    linear_kv=not_none(TEColumnParallelLinear),
+                    core_attention=not_none(TEDotProductAttention),
+                    linear_proj=TERowParallelLinear,
+                ),
+            ),
+            cross_attn_bda=get_bias_dropout_add,
+            mlp=ModuleSpec(
+                module=MLP,
+                submodules=MLPSubmodules(
+                    linear_fc1=not_none(TELayerNormColumnParallelLinear),
+                    linear_fc2=not_none(TERowParallelLinear),
+                ),
+            ),
+            mlp_bda=get_bias_dropout_add,
+        ),
+    )
+def encoder_model_with_local_spec() -> ModuleSpec:
+    """T5 encoder local spec (uses Megatron-Core components)."""
+    return ModuleSpec(
+        module=TransformerLayer,
+        submodules=TransformerLayerSubmodules(
+            input_layernorm=LNImpl,
+            self_attention=ModuleSpec(
+                module=SelfAttention,
+                params={"attn_mask_type": AttnMaskType.arbitrary},
+                submodules=SelfAttentionSubmodules(
+                    linear_qkv=ColumnParallelLinear,
+                    core_attention=DotProductAttention,
+                    linear_proj=RowParallelLinear,
+                    q_layernorm=IdentityOp,
+                    k_layernorm=IdentityOp,
+                ),
+            ),
+            self_attn_bda=get_bias_dropout_add,
+            pre_mlp_layernorm=LNImpl,
+            mlp=ModuleSpec(
+                module=MLP,
+                submodules=MLPSubmodules(
+                    linear_fc1=ColumnParallelLinear, linear_fc2=RowParallelLinear
+                ),
+            ),
+            mlp_bda=get_bias_dropout_add,
+            sharded_state_dict_keys_map={
+                "input_layernorm.": "self_attention.linear_qkv.layer_norm_",
+                "pre_mlp_layernorm.": "mlp.linear_fc1.layer_norm_",
+            },
+        ),
+    )
+def decoder_model_with_local_spec() -> ModuleSpec:
+    """T5 decoder local spec (uses Megatron-Core components)."""
+    return ModuleSpec(
+        module=TransformerLayer,
+        submodules=TransformerLayerSubmodules(
+            input_layernorm=LNImpl,
+            self_attention=ModuleSpec(
+                module=SelfAttention,
+                params={"attn_mask_type": AttnMaskType.causal},
+                submodules=SelfAttentionSubmodules(
+                    linear_qkv=ColumnParallelLinear,
+                    core_attention=DotProductAttention,
+                    linear_proj=RowParallelLinear,
+                    q_layernorm=IdentityOp,
+                    k_layernorm=IdentityOp,
+                ),
+            ),
+            self_attn_bda=get_bias_dropout_add,
+            pre_cross_attn_layernorm=LNImpl,
+            cross_attention=ModuleSpec(
+                module=CrossAttention,
+                params={"attn_mask_type": AttnMaskType.arbitrary},
+                submodules=CrossAttentionSubmodules(
+                    linear_q=ColumnParallelLinear,
+                    linear_kv=ColumnParallelLinear,
+                    core_attention=DotProductAttention,
+                    linear_proj=RowParallelLinear,
+                ),
+            ),
+            cross_attn_bda=get_bias_dropout_add,
+            pre_mlp_layernorm=LNImpl,
+            mlp=ModuleSpec(
+                module=MLP,
+                submodules=MLPSubmodules(
+                    linear_fc1=ColumnParallelLinear, linear_fc2=RowParallelLinear
+                ),
+            ),
+            mlp_bda=get_bias_dropout_add,
+            sharded_state_dict_keys_map={
+                "input_layernorm.": "self_attention.linear_qkv.layer_norm_",
+                "pre_mlp_layernorm.": "mlp.linear_fc1.layer_norm_",
+            },
+        ),
+    )
+def get_t5_encoder_with_transformer_engine_block_spec(
+    num_layers: int,
+) -> TransformerBlockSubmodules:
+    """T5 encoder block spec for Transformer Engine
+    Args:
+      config (TransformerConfig):
+def get_t5_decoder_with_transformer_engine_block_spec(
+    num_layers: int,
+) -> TransformerBlockSubmodules:
+    """T5 decoder block spec for Transformer Engine
+    Args:
+      config (TransformerConfig):
+def get_t5_encoder_with_local_block_spec(num_layers: int) -> TransformerBlockSubmodules:
+    """T5 encoder block spec for local (uses Megatron-Core components)
+    Args:
+      num_layers (int):
+def get_t5_decoder_with_local_block_spec(num_layers: int) -> TransformerBlockSubmodules:
+    """T5 decoder block spec for local (uses Megatron-Core components)
+    Args:
+      num_layers (int):
+
+third_party/Megatron-LM/megatron/core/resharding/refit.py
+def _get_config_tuple(core) -> Optional[Tuple[int, int, int, int, int]]:
+    """Extract (TP, PP, EP, DP, expt_tp) sizes from a model core.
+    Returns:
+        Tuple of (TP, PP, EP, DP, expt_tp) sizes, or None if core is None.
+        - TP: Tensor parallelism
+        - PP: Pipeline parallelism
+        - EP: Expert parallelism
+        - DP: Data parallelism
+        - expt_tp: Expert tensor parallelism
+    """
+    if core is None:
+        return None
+    pg = core.pg_collection
+    return (
+        len(torch.distributed.get_process_group_ranks(pg.tp)) if pg.tp else 1,
+        len(torch.distributed.get_process_group_ranks(pg.pp)) if pg.pp else 1,
+        len(torch.distributed.get_process_group_ranks(pg.ep)) if pg.ep else 1,
+        len(torch.distributed.get_process_group_ranks(pg.dp)) if pg.dp else 1,
+        (
+            len(torch.distributed.get_process_group_ranks(pg.expt_tp))
+            if hasattr(pg, 'expt_tp') and pg.expt_tp
+            else 1
+        ),
+    )
+def _build_plan_cache_key(src_core, tgt_core, num_experts: Optional[int]) -> _PlanCacheKey:
+    """Build cache key for reshard plan.
+    Args:
+        src_core: Source model core (or None for non-collocated destination/idle ranks)
+        tgt_core: Target model core (or None for non-collocated source/idle ranks)
+        num_experts: Number of MoE experts (or None for non-MoE models)
+    Returns:
+        Cache key that uniquely identifies this reshard configuration for this rank
+    """
+    rank = torch.distributed.get_rank()
+    src_config = _get_config_tuple(src_core)
+    dst_config = _get_config_tuple(tgt_core)
+    return _PlanCacheKey(
+        rank=rank, src_config=src_config, dst_config=dst_config, num_experts=num_experts
+    )
+# Module-level cache for refit services to avoid repeated allocations
+_service_cache: dict[str, CopyService] = {}
+_plan_cache: dict[_PlanCacheKey, Any] = {}
+def get_or_create_service(backend: RefitBackendName) -> CopyService:
+    """Get or create a cached CopyService instance for the given backend.
+    This avoids expensive repeated allocations (especially for NVSHMEM buffers)
+    when swap_model_weights is called multiple times with the same backend.
+    """
+    if backend in _service_cache:
+        return _service_cache[backend]
+    if backend == "nccl":
+        service = NCCLCopyService()
+    elif backend == "gloo":
+        service = GlooCopyService()
+    elif backend == "nvshmem":
+        service = NVSHMEMCopyService()
+    else:
+        raise ValueError(f"Unknown backend '{backend}'")
+    _service_cache[backend] = service
+    return service
+def clear_service_cache():
+def clear_plan_cache():
+def clear_all_caches():
+def swap_model_weights(
+    src_model: LanguageModule,
+    target_model: LanguageModule,
+    refit_method: Union[RefitBackendName, CopyService],
+):
+def reshard_model_weights(
+    src_model: LanguageModule, target_model: LanguageModule, service: CopyService
 ):
 
-third_party/Megatron-LM/megatron/core/transformer/cuda_graphs.py
-def is_graph_capturing():
-def _set_capture_start():
-def _set_capture_end():
-def _check_supported_type(meta):
-def _determine_if_transformer_decoder_layer(base_module):
-def _determine_if_first_last_layer_of_this_vp_chunk(base_module):
-def _clone_nested_tensors(value: Any) -> Any:
-    """Recursively clone tensors inside nested containers."""
-    if torch.is_tensor(value):
-def _ensure_generator_state_is_cudagraph_safe(gen: torch.Generator) -> torch.Generator:
-    """Make generator state safe for CUDA graph capture/replay.
-    Generator state tensors can become inference tensors if created under `torch.inference_mode()`.
-    CUDA graph capture may later attempt in-place updates on that state; this fails for inference
-    tensors. Fix the generator *in-place* (preserving identity) by cloning its state outside
-    inference mode and setting it back.
-    """
-    with torch.inference_mode(mode=False):
-def create_cudagraphs():
-def delete_cuda_graphs():
-def _layer_is_graphable(layer, config):
-def convert_schedule_table_to_order(num_warmup_microbatches, num_model_chunks, schedule_table):
-def get_overlap_moe_expert_parallel_comm_order(order, num_layers_per_chunk, capture_wgrad_graph):
-
-third_party/Megatron-LM/megatron/core/models/gpt/fine_grained_callables.py
-def weak_method(method):
-def should_free_input(name, is_moe, config):
-def build_transformer_layer_callables(layer: TransformerLayer):
-def build_mtp_layer_callables(layer):
-def build_layer_callables(layer):
-
-third_party/Megatron-LM/megatron/core/dist_checkpointing/validation.py
-def parse_strict_flag(strict: Union[str, StrictHandling]) -> StrictHandling:
-    """Parse user passed strict flag from a string to StrictHandling instance.
-    Args:
-        strict (str, StrictHandling):
-def validate_integrity_and_strict_load(
-    sharded_state_dict: ShardedStateDict,
-    strict: StrictHandling,
-    validate_access_integrity: bool,
-    local_metadata: Optional[_LocalMetadata] = None,
-    global_metadata: Optional[_GlobalMetadata] = None,
-    ckpt_sharded_metadata: Optional["CkptShardedMetadata"] = None,
-) -> Tuple[ShardedStateDict, Set[str], Set[str]]:
-    """Validates sharding integrity and potential mismatches with the checkpoint.
-    `validate_access_integrity` controls sharding integrity check (orthogonal
-    to strictness checking) which verifies `sharded_state_dict` runtime completeness
-    (in isolation from the actual checkpoint).
-    `strict` flag controls handling of mismatches between the requested
-    sharded state dict to load and the actual checkpoint. See `StrictHandling`
-    docs for details regarding flag behavior and performance implications
-    (disk interactions or inter-rank communication).
-    Args:
-        sharded_state_dict (ShardedStateDict):
-def verify_checkpoint_and_load_strategy(
-    checkpoint_dir: str,
-    sharded_strategy: Union[LoadShardedStrategy, Tuple[str, int], None] = None,
-    common_strategy: Union[LoadCommonStrategy, Tuple[str, int], None] = None,
-) -> Tuple[LoadShardedStrategy, LoadCommonStrategy]:
-    """Verifies if checkpoint metadata exists and matches given strategies.
-    If no strategies are passed, they are determined based on the checkpoint metadata.
-    Args:
-        checkpoint_dir (str):
-def adjust_non_strict_load(
-    sharded_state_dict: ShardedStateDict, sharded_keys_to_remove: Set[str]
-) -> ShardedStateDict:
-    """Adjusts sharded state dict removing keys not existing in the checkpoint.
-    Args:
-        sharded_state_dict (ShardedStateDict):
-def _determine_missing_and_unexpected_keys(
-    ckpt_sharded_metadata: "CkptShardedMetadata",
-    local_metadata: _LocalMetadata,
-    global_metadata: Optional[_GlobalMetadata] = None,
-) -> Tuple[Set[str], Set[str]]:
-    """Determines load mismatches based on metadata.
-    There is an asymmetry between "unexpected" and "missing" keys.
-    Unexpected keys can be determined based only on local metadata.
-    Missing keys must be based on global metadata, since other ranks might access
-    different keys than the current rank.
-    In consequence, the return value of this function is different on each rank:
-    "missing_keys" are equal, but "unexpected_keys" might differ across ranks.
-    Args:
-        ckpt_sharded_metadata (CkptShardedMetadata):
-def maybe_report_missing_and_unexpected_keys(
-    missing_keys: Set[str], unexpected_keys: Set[str], raise_error: bool = True
-) -> None:
-    """Raises or logs an error in case missing or unexpected keys are non-empty.
-    Args:
-        missing_keys (Set[str]):
-def _validate_common_state_dict(common_state_dict: CommonStateDict) -> None:
-    """Validate consistancy across ranks for the common state dict
-    We save the common state dict only on rank 0. We validate to make sure that the common dict is consistent across ranks before saving.
-    Args:
-        common_state_dict: The common state dict present in all ransk
-    """
-    if not torch.distributed.is_initialized():
-def validate_sharding_integrity(
-    global_metadata: _GlobalMetadata, common_state_dict: CommonStateDict = None
-) -> None:
-    """Validate if the ShardedTensors and ShardedObjects from multiple processes define correct sharding.
-    Local ShardedTensors and ShardedObject metadata is exchanged with `torch.distributed.all_gather_object`
-    and then process with global rank 0 checks if main replicas of the shards:
-    - cover the whole global tensors
-    - don't overlap
-    Args:
-        global_metadata (_GlobalMetadata):
-def _validate_sharding_for_key(rank_sharding: List[Tuple[int, ShardedTensor]]):
-def _compute_shards_access(rank_sharding):
-def _validate_objects_for_key(sharded_objects: List[ShardedObject]):
-def determine_global_metadata(
-    sharded_state_dict: ShardedStateDict,
-) -> Tuple[_LocalMetadata, _GlobalMetadata]:
-    """Exchanges local metadata with `all_gather_object` to determine global metadata.
-    Args:
-        sharded_state_dict (ShardedStateDict):
-def validate_sharded_objects_handling(
-    sharded_strategy: Union[SaveShardedStrategy, LoadShardedStrategy],
-    common_strategy: Union[SaveCommonStrategy, LoadCommonStrategy],
-) -> None:
-    """Checks if either of the passed strategies can handle sharded objects.
-    Args:
-        sharded_strategy (Union[SaveShardedStrategy, LoadShardedStrategy]):
-
-third_party/Megatron-LM/megatron/core/optimizer/cpu_offloading/hybrid_optimizer.py
-def _param_generator(cpu_optimizer):
-
-third_party/Megatron-LM/megatron/core/optimizer/clip_grads.py
-def get_grad_norm_fp32(
-    grads_for_norm: Union[List[torch.Tensor], torch.Tensor],
-    norm_type: Union[int, float] = 2,
-    grad_stats_parallel_group: Optional[torch.distributed.ProcessGroup] = None,
-) -> float:
-    """Calculate the norm of gradients in fp32.
-    This is adapted from torch.nn.utils.clip_grad.clip_grad_norm_ and
-    added functionality to handle model parallel parameters.
-    Arguments:
-        grads_for_norm (Iterable[Tensor] or Tensor):
-def clip_grad_by_total_norm_fp32(
-    parameters: Union[List[torch.Tensor], torch.Tensor],
-    max_norm: Union[int, float],
-    total_norm: float,
-    use_decoupled_grad: bool = False,
-):
-def count_zeros_fp32(
-    parameters: Union[List[torch.Tensor], torch.Tensor],
-    grad_stats_parallel_group: torch.distributed.ProcessGroup,
-    use_decoupled_grad: bool = False,
-    tp_group: Optional[torch.distributed.ProcessGroup] = None,
-) -> float:
-    """Counts the number of zeros in gradients associated with the passed-in list of
-    parameters.
-    Args:
-        parameters (Iterable[Tensor] or Tensor):
+third_party/Megatron-LM/megatron/core/inference/engines/dynamic_engine.py
+def format_mem_bytes(mem_bytes):
 
 third_party/Megatron-LM/megatron/core/tokenizers/text/libraries/tiktoken_tokenizer.py
 def reload_mergeable_ranks(
@@ -3829,164 +3161,6 @@ def reload_mergeable_ranks(
     Reload the tokenizer JSON file and convert it to Tiktoken format.
     Args:
         path (str):
-
-third_party/Megatron-LM/megatron/core/optimizer/muon.py
-def get_megatron_muon_optimizer(
-    config: OptimizerConfig,
-    model_chunks: List[MegatronModule],
-    config_overrides: Optional[Dict[ParamKey, ParamGroupOverride]] = None,
-    use_gloo_process_groups: bool = True,
-    layer_wise_distributed_optimizer: bool = False,
-    pg_collection: Optional[ProcessGroupCollection] = None,
-) -> MegatronOptimizer:
-    """This function is used to get the muon optimizer for the model chunks.
-    It is used to get the muon optimizer for the model chunks.
-    Args:
-        config (OptimizerConfig):
-
-third_party/Megatron-LM/megatron/core/optimizer/qk_clip.py
-def clip_qk(model, log_max_only=False) -> float:
-    """
-    Clip the QK attention logits to the threshold, recommended for Muon optimizer.
-    Args:
-        model: The model to clip the QK attention logits, a list of model chunks.
-        log_only: Whether to only log the max attention logit, without updating the weights.
-    Returns:
-        The maximum attention logit, a float.
-    """
-    with torch.no_grad():
-
-third_party/Megatron-LM/megatron/core/dist_checkpointing/core.py
-def check_is_distributed_checkpoint(checkpoint_dir):
-def maybe_load_config(checkpoint_dir: str) -> Optional[CheckpointingConfig]:
-    """Returns checkpoint config if `checkpoint_dir` is a distributed checkpoint and None otherwise
-    Args:
-        checkpoint_dir: checkpoint directory
-    Returns:
-        CheckpointingConfig (optional):
-def save_config(config: CheckpointingConfig, checkpoint_dir: str):
-
-third_party/Megatron-LM/megatron/core/transformer/module.py
-def param_is_not_shared(param):
-def conversion_helper(val, conversion):
-def fp32_to_float16(val, float16_convertor):
-def float16_to_fp32(val):
-
-third_party/Megatron-LM/megatron/core/tokenizers/megatron_tokenizer.py
-def _get_metadata_path(tokenizer_path: str) -> str:
-    """
-    Returns metadata file path.
-    Args:
-        tokenizer_path (str):
-
-third_party/Megatron-LM/megatron/core/transformer/spec_utils.py
-def import_module(module_path: Tuple[str]):
-def get_module(spec_or_module: Union[ModuleSpec, type], **additional_kwargs):
-def build_module(spec_or_module: Union[ModuleSpec, type], *args, **kwargs):
-
-third_party/Megatron-LM/megatron/core/dist_checkpointing/exchange_utils.py
-def is_float8tensor(tensor: torch.Tensor) -> bool:
-    """Check if a tensor is a Transformer Engine Float8Tensor"""
-    return HAVE_TE_FLOAT8TENSOR and isinstance(tensor, Float8Tensor)
-logger = logging.getLogger(__name__)
-class ShardDistribution(NamedTuple):
-def _shard_size(sh_ten: ShardedTensor):
-def _get_empty_tensor_for_exchange(
-    shard_id: _ShardId,
-    needed_shards: Dict[_ShardId, ShardedTensor],
-    unneeded_shards: Dict[_ShardId, ShardedTensor],
-    loaded_tensors: Dict[_ShardId, torch.Tensor],
-) -> Tuple[torch.Tensor, Optional[torch.device]]:
-    """Determines the empty tensor to use for exchange.
-    If shard_id is needed by this rank, it will be in the `unloaded_shards`.
-    Otherwise, the metadata for this tensor can be found in `shard_to_metadata`
-    Args:
-        shard_id (_ShardId):
-def distribute_shards_to_ranks(
-    shard_to_ranks: Dict[T, List[int]],
-    shard_to_size: Dict[T, int],
-    num_ranks: int,
-    cross_parallelization_group_loads: Set[T],
-) -> Dict[T, int]:
-    """Computes uniform distribution of workload across ranks, based on sizes.
-    Currently, the assignment is greedy, based on:
-    1. Cross-parallelization group dependencies (shards with main rank in another group
-       are assigned at the end to make sure the distribution for load and save
-       is as similar as possible).
-    2. Secondly, the coverage of each shard
-        (how many ranks the shard is available on; lower coverage is assigned first)
-    3. Then, the size of each shard (larger size is assigned first)
-    4. Finally, shard id for differentiation.
-    Last step is added because we rely on the fact that
-    the assignment is deterministic on all ranks.
-    Args:
-        shard_to_ranks (Dict[T, List[int]]):
-def determine_main_replica_uniform_distribution(
-    sharded_state_dict: ShardedStateDict,
-    parallelization_group: torch.distributed.ProcessGroup,
-    ignore_groups: bool = False,
-) -> Optional[ShardDistribution]:
-    """Computes the save distribution.
-    Should be used in conjunction with `distribute_main_replicas_with_precomputed_distribution`
-    which applies the computed save distribution.
-    We rely on the fact that the assignment algorithm is deterministic on all ranks,
-    so there is no extra communication needed after metadata exchange.
-    Args:
-        sharded_state_dict (ShardedStateDict):
-def exchange_loaded_tensors_gather_rounds(
-    loaded_tensors: Dict[_ShardId, torch.Tensor],
-    unloaded_shards: Dict[_ShardId, ShardedTensor],
-    shard_distribution: ShardDistribution = None,
-    parallelization_group: Optional[torch.distributed.ProcessGroup] = None,
-) -> Dict[_ShardId, torch.Tensor]:
-    """Exchange the tensors loaded by different ranks with several all_gather calls.
-    Groups tensors by dtype, divide tensors that will be exchanged into rounds
-    and execute all_gather for tensors from each round.
-    Note: the loading is distributed across ranks based on total loaded size
-    in bytes, so there is no guarantee that number of rounds needed for each
-    rank will be similar, which might result in a lot of almost empty
-    all_gathers. The solution would be to group all tensors into a one
-    bytes tensor and do a single all_gather (with similarly sized messages).
-    Args:
-        loaded_tensors (Dict[_ShardId, torch.Tensor]):
-def exchange_loaded_tensors_gather_object(
-    loaded_tensors: Dict[_ShardId, torch.Tensor],
-    unloaded_shards: Dict[_ShardId, ShardedTensor],
-    shard_distribution: ShardDistribution,
-    parallelization_group: Optional[torch.distributed.ProcessGroup] = None,
-) -> Dict[_ShardId, torch.Tensor]:
-    """Exchange the tensors loaded by different ranks with a simple all_gather_object call.
-    This version can be used for debugging purposes do to its simplistic
-    implementation. Shouldn't be used if performance is important.
-    Args:
-        loaded_tensors (Dict[_ShardId, torch.Tensor]):
-def exchange_loaded_objects_gather_object(
-    loaded_objects: Dict[_ShardId, Any]
-) -> Dict[_ShardId, Any]:
-    """Exchange the objects loaded by different ranks with a simple all_gather_object call.
-    Args:
-        loaded_objects (Dict[_ShardId, Any]):
-def exchange_loaded_tensors_broadcast(
-    loaded_tensors: Dict[_ShardId, torch.Tensor],
-    unloaded_shards: Dict[_ShardId, ShardedTensor],
-    shard_distribution: ShardDistribution,
-    parallelization_group: Optional[torch.distributed.ProcessGroup] = None,
-) -> Dict[_ShardId, torch.Tensor]:
-    """Exchange the tensors loaded by different ranks by a series of broadcasts.
-    For each rank for each loaded tensor do a broadcast to the whole group.
-    A reasonable tradeoff in terms of performance and simplicity.
-    Args:
-        loaded_tensors (Dict[_ShardId, torch.Tensor]):
-def exchange_by_distribution(
-    loaded_tensors: Dict[_ShardId, torch.Tensor],
-    unloaded_shards: Dict[_ShardId, ShardedTensor],
-    shard_distribution: ShardDistribution,
-    parallelization_group: Optional[torch.distributed.ProcessGroup] = None,
-    exchange_algo="broadcast",
-) -> Dict[_ShardId, torch.Tensor]:
-    """Exchange tensors loaded by different ranks using the specified exchange_algo.
-    Args:
-        loaded_tensors (Dict[_ShardId, torch.Tensor]):
 
 third_party/Megatron-LM/megatron/core/transformer/experimental_attention_variant/dsa.py
 def rotate_activation(x: torch.Tensor) -> torch.Tensor:
@@ -4094,89 +3268,449 @@ def compute_dsa_indexer_loss(
     # Scale by coefficient.
     indexer_loss = kl_div * loss_coeff
     return indexer_loss
-class DSAIndexerLossAutoScaler(torch.autograd.Function):
+def _compute_index_scores(q: torch.Tensor, weights: torch.Tensor, k: torch.Tensor) -> torch.Tensor:
+    """
+    Perform index score using BF16 precision.
+    Reference:
+        https://github.com/deepseek-ai/DeepSeek-V3.2-Exp/blob/main/inference/kernel.py#L254-L274
+    This is a BF16 implementation of the `fp8_index` logic:
+        1. Compute attention scores: q @ k^T;
+        2. Apply ReLU activation;
+        3. Weight by attention weights;
+        4. Sum across attention heads.
+    Args:
+        q: BF16 [seqlen_q, batch, index_n_heads, index_head_dim], the query tensor.
+        weights: BF16 [seqlen_q, batch, index_n_heads], the attention weights.
+        k: BF16 [seqlen_k, batch, index_head_dim], the key tensor.
+    Returns:
+        index_scores: FP32 [batch, seqlen_q, seqlen_k], the index scores.
+    """
+    # Compute attention scores: q @ k^T
+    # [seqlen_q, batch, index_n_heads, index_head_dim] @ [seqlen_k, batch, index_head_dim]^T
+    #   -> [seqlen_q, batch, index_n_heads, seqlen_k]
+    index_scores = torch.einsum('sbhd,tbd->sbht', q.float(), k.float())
+    # Apply ReLU activation.
+    index_scores = torch.relu(index_scores)
+    # Weight each head by attention weights.
+    # [seqlen_q, batch, index_n_heads, seqlen_k] * [seqlen_q, batch, index_n_heads, 1]
+    #   -> [seqlen_q, batch, index_n_heads, seqlen_k]
+    index_scores = index_scores * weights.unsqueeze(-1)
+    # Sum across attention heads.
+    # [seqlen_q, batch, index_n_heads, seqlen_k] -> [seqlen_q, batch, seqlen_k]
+    index_scores = index_scores.sum(dim=2)
+    # Transpose to [batch, seqlen_q, seqlen_k].
+    index_scores = index_scores.transpose(0, 1)
+    return index_scores
+def fused_qk_topk_naive(
+    q: torch.Tensor,
+    k: torch.Tensor,
+    weights: torch.Tensor,
+    index_topk: int,
+    mask: Optional[torch.Tensor] = None,
+):
+def fwd_fused_indexer_loss_naive(
+    q, weights, k, query, key, topk, softmax_scale, loss_coeff, mask, sparse_loss, pg_collection
+):
+def bwd_fused_indexer_loss_naive(
+    q,
+    weights,
+    k,
+    query,
+    key,
+    topk_indices,
+    softmax_scale,
+    loss_coeff,
+    sparse_loss,
+    grad_loss,
+    pg_collection,
+):
 def unfused_dsa_fn(query, key, value, topk_indices, softmax_scale):
 
-third_party/Megatron-LM/megatron/core/transformer/heterogeneous/linear_replacements.py
-def _gather_from_tensor_parallel_region(x: Tensor, config: TransformerConfig) -> Tensor:
-    if get_tensor_model_parallel_world_size() > 1:
-        if config.sequence_parallel:
-            # pad hidden dimension (last dimension) with zeros such that the valid data is placed in
-            # indices [tp_rank * hidden/tp_size, (tp_rank+1) * hidden/tp_size),
-            # and zeros fill the other parts.
-            output_size = config.hidden_size
-            output_size_per_partition = divide(output_size, get_tensor_model_parallel_world_size())
-            pad_before = get_tensor_model_parallel_rank() * output_size_per_partition
-            pad_after = output_size - pad_before - output_size_per_partition
-            pad_shape = [0] * (x.ndim - 1) * 2 + [pad_before, pad_after]
-            x = F.pad(x, pad_shape, "constant", 0)
-            x = reduce_scatter_to_sequence_parallel_region(x)
-        else:
-            x = gather_from_tensor_model_parallel_region(x)
-    return x
-if HAVE_TE:
-    class TELayerNormColumnParallelLinearGathered(TELayerNormColumnParallelLinear):
+third_party/Megatron-LM/megatron/core/inference/utils.py
+def get_attention_mask(seq_length: int) -> torch.Tensor:
+    """Constructs an attention mask given the input sequence length."""
+    attention_mask = torch.tril(
+        torch.ones((1, seq_length, seq_length), device=torch.cuda.current_device())
+    ).view(1, 1, seq_length, seq_length)
+    # Convert to boolean
+    attention_mask = attention_mask < 0.5
+    return attention_mask
+# Initialize cache for sequence parallel modules
+moe_layer_cache = None
+def _init_moe_expert_cache(model):
+def set_decode_expert_padding(model, set_to: bool = False, capacity_factor: int = None):
+def tensor_swap(x, src_idxs, dst_idxs):
 
-third_party/Megatron-LM/megatron/core/transformer/transformer_layer.py
-def get_transformer_layer_offset(
-    config: TransformerConfig, vp_stage: Optional[int] = None, pp_rank: Optional[int] = None
+third_party/Megatron-LM/megatron/core/models/gpt/heterogeneous/heterogeneous_layer_specs.py
+def _get_layer_norm(config: AttentionConfig | MLPConfig, use_te: bool, normalization: str):
+def _get_qk_layernorm(use_te: bool, normalization: str):
+def _get_heterogenous_attention_spec(
+    attn_config: AttentionConfig, use_te: bool, qk_layernorm: bool, normalization: str
+):
+def _get_heterogenous_mlp_spec(mlp_config: MLPConfig, use_te: bool):
+def _get_sharded_state_dict_keys_map(block_config: TransformerBlockConfig, use_te: bool):
+def get_gpt_heterogeneous_layer_spec(
+    config: HeterogeneousTransformerConfig,
+    use_te: bool = False,
+    vp_stage: Optional[int] = None,
+    pp_rank: Optional[int] = None,
 ):
 
-third_party/Megatron-LM/megatron/core/resharding/execution.py
-def execute_reshard_plan(
-    plan: ReshardPlan,
-    src_module: torch.nn.Module,
-    dst_module: torch.nn.Module,
-    service: CopyService,
-) -> None:
+third_party/Megatron-LM/megatron/core/tokenizers/megatron_tokenizer.py
+def _get_metadata_path(tokenizer_path: str) -> str:
     """
-    Execute a reshard plan (from centralized controller).
-    A communication service must be provided to abstract transport.
-    Expected service API: submit_send(tensor, dest_rank), submit_recv(tensor, src_rank), run().
+    Returns metadata file path.
+    Args:
+        tokenizer_path (str):
+def _get_tokenizer_model_class(library: str, metadata: dict) -> MegatronTokenizerBase:
     """
-    src_params = {name: p for name, p in src_module.named_parameters(recurse=True)}
-    dst_params = {name: p for name, p in dst_module.named_parameters(recurse=True)}
-    submit_send_with_id = getattr(service, "submit_send_with_id", None)
-    submit_recv_with_id = getattr(service, "submit_recv_with_id", None)
-    # Submit sends
-    for op in plan.send_ops:
-        src_param = src_params.get(op.param_name)
-        if src_param is not None:
-            src_view = src_param.data[op.my_slice].contiguous()
-            if submit_send_with_id is not None and op.task_id is not None:
-                submit_send_with_id(op.task_id, src_view, op.peer_rank)
-            else:
-                service.submit_send(src_view, op.peer_rank)
-    # Submit recvs
-    recv_writebacks: List[Tuple[torch.Tensor, torch.nn.Parameter, tuple[slice, ...]]] = []
-    for op in plan.recv_ops:
-        dst_param = dst_params.get(op.param_name)
-        if dst_param is not None:
-            dst_slice_view = dst_param.data[op.my_slice]
-            recv_buffer = torch.empty_like(dst_slice_view.contiguous())
-            if submit_recv_with_id is not None and op.task_id is not None:
-                submit_recv_with_id(op.task_id, recv_buffer, op.peer_rank)
-            else:
-                service.submit_recv(recv_buffer, op.peer_rank)
-            recv_writebacks.append((recv_buffer, dst_param, op.my_slice))
-    # Execute
-    logger.info(f"Executing {len(plan.send_ops)} sends + {len(plan.recv_ops)} recvs")
-    service.run()
-    dist.barrier()
-    # Write back received buffers into their destination parameter slices
-    for recv_buffer, dst_param, dst_slice in recv_writebacks:
-        with torch.no_grad():
+    Returns a class which corresponds to choosen tokenizer model type.
+    Args:
+        library (str):
+
+third_party/Megatron-LM/megatron/core/dist_checkpointing/utils.py
+def zip_strict(*args):
+def _sharded_tensor_shard_id(sharded_tensor: ShardedTensor) -> _ShardId:
+    """Unique id of the sharded tensor data.
+    Should yield the same value for same data replicated on different ranks.
+    Args:
+        sharded_tensor (ShardedTensor):
+def _sharded_object_id(sharded_object: ShardedObject) -> _ShardId:
+    """Unique id of the sharded object data.
+    Should yield the same value for same data replicated on different ranks.
+    Args:
+        sharded_object (ShardedObject):
+def extract_sharded_tensors(
+    sharded_state_dict: ShardedStateDict,
+) -> Tuple[ShardedStateDict, StateDict]:
+    """Extract a dict consisting of only ShardedTensor objects
+    from a given state dict with any objects.
+    Args:
+        sharded_state_dict: state dict possibly containing ShardedTensor objects
+    Returns:
+        Tuple[ShardedStateDict, StateDict]: tuple of:
+            - state dict with all ShardedTensor (keeping the original state dict structure)
+            - state dict with all objects other than ShardedTensor
+              (keeping the original state dict structure)
+    """
+    return extract_matching_values(sharded_state_dict, lambda v: isinstance(v, ShardedTensor))
+def extract_sharded_tensors_and_factories(
+    sharded_state_dict: ShardedStateDict,
+) -> Tuple[ShardedStateDict, StateDict]:
+    """Extract a dict consisting of only ShardedTensor and ShardedTensorFactory objects
+    from a given state dict with any objects.
+    Args:
+        sharded_state_dict:
+            state dict possibly containing ShardedTensor and ShardedTensorFactory objects
+    Returns:
+        Tuple[ShardedStateDict, StateDict]: tuple of:
+            - state dict with all ShardedTensor and ShardedTensorFactory
+              (keeping the original state dict structure)
+            - state dict with all other objects (keeping the original state dict structure)
+    """
+    return extract_matching_values(
+        sharded_state_dict, lambda v: isinstance(v, (ShardedTensor, ShardedTensorFactory))
+    )
+def extract_sharded_tensors_or_nonpersistent(
+    sharded_state_dict: ShardedStateDict,
+) -> Tuple[ShardedStateDict, StateDict]:
+    """Extract a dict consisting of only ShardedTensor, ShardedTensorFactory
+    and LocalNonpersistentObject objects from a given state dict with any objects.
+    Args:
+        sharded_state_dict: state dict possibly containing ShardedTensor, ShardedTensorFactory
+        and LocalNonpersistentObject objects
+    Returns:
+        Tuple[ShardedStateDict, StateDict]: tuple of:
+            - state dict with all ShardedTensor, ShardedTensorFactory and LocalNonpersistentObject
+              (keeping the original state dict structure)
+            - state dict with all other objects (keeping the original state dict structure)
+    """
+    return extract_matching_values(
+        sharded_state_dict,
+        lambda v: isinstance(v, (ShardedTensor, LocalNonpersistentObject, ShardedTensorFactory)),
+    )
+def extract_sharded_base(
+    sharded_state_dict: ShardedStateDict,
+) -> Tuple[ShardedStateDict, StateDict]:
+    """Extract a dict consisting of only ShardedBase from a given state dict with any objects.
+    Args:
+        sharded_state_dict: state dict possibly containing ShardedBase objects
+    Returns:
+        Tuple[ShardedStateDict, StateDict]: tuple of:
+            - state dict with all ShardedBase objects (keeping the original state dict structure)
+            - state dict with all other objects (keeping the original state dict structure)
+    """
+    return extract_matching_values(sharded_state_dict, lambda v: isinstance(v, ShardedBase))
+def extract_nonpersistent(
+    sharded_state_dict: ShardedStateDict,
+) -> Tuple[ShardedStateDict, StateDict]:
+    """Extract a dict consisting of only LocalNonpersistentObjects from a given state dict.
+    Args:
+        sharded_state_dict: state dict possibly containing LocalNonpersistentObjects
+    Returns:
+        Tuple[ShardedStateDict, StateDict]: tuple of:
+            - state dict with all LocalNonpersistentObjects
+              (keeping the original state dict structure)
+            - state dict with all other objects (keeping the original state dict structure)
+    """
+    return extract_matching_values(
+        sharded_state_dict, lambda v: isinstance(v, LocalNonpersistentObject)
+    )
+def add_prefix_for_sharding(sharded_state_dict: ShardedStateDict, prefix: str):
+def replace_prefix_for_sharding(
+    sharded_state_dict: ShardedStateDict, old_prefix: str, new_prefix: str
+):
+def apply_prefix_mapping(sharded_state_dict: ShardedStateDict, prefix_map: Dict[str, str]):
+def force_all_tensors_to_non_fp8(sharded_state_dict: ShardedStateDict):
+def logger_stack(name: Optional[str] = None, current_logger: Optional[logging.Logger] = None):
+def debug_time(
+    name: str, logger: Optional[logging.Logger] = None, threshold: float = float("-inf"), level=None
+):
+def debug_msg(msg: str):
+
+third_party/Megatron-LM/megatron/core/models/common/embeddings/rope_utils.py
+def get_pos_emb_on_this_cp_rank(
+    pos_emb: Tensor, seq_dim: int, cp_group: torch.distributed.ProcessGroup
+) -> Tensor:
+    """Get the position embedding on the current context parallel rank.
+    Args:
+        pos_emb (Tensor):
+def _rotate_half(x: Tensor, rotary_interleaved: bool) -> Tensor:
+    """Change sign so the last dimension becomes [-odd, +even]
+    Args:
+        x (Tensor):
+def _apply_rotary_pos_emb_bshd(
+    t: Tensor,
+    freqs: Tensor,
+    rotary_interleaved: bool = False,
+    multi_latent_attention: bool = False,
+    mscale: float = 1.0,
+) -> Tensor:
+    """Apply rotary positional embedding to input tensor T.
+    check https://kexue.fm/archives/8265 for detailed formulas
+    Args:
+        t (Tensor):
+def _get_thd_freqs_on_this_cp_rank(
+    cp_rank: int, cp_size: int, x: Tensor, freqs: Tensor, offset: int = 0
+) -> Tensor:
+    """Get the correct frequency slice for this context parallel rank with optional sequence offset.
+    Args:
+        cp_rank: Current context parallel rank
+        cp_size: Total context parallel size
+        x: Input tensor for current sequence
+        freqs: Frequency tensor - either full batch positions or max sequence length
+        offset: Starting position offset for this sequence in the original batch (default: 0)
+    Returns:
+        Tensor: Frequency slice corresponding to this CP rank's portion of the sequence
+    Note:
+        This function supports two modes based on the offset parameter:
+        1. offset > 0: Exact mapping mode - freqs contains all positions across all sequences.
+           The offset ensures each sequence gets frequencies from its actual position within
+           the overall batch. Critical for non-1D RoPE in VLMs where spatial positions matter.
+        2. offset = 0: Traditional mode - freqs contains only max sequence length positions.
+           All sequences use frequencies starting from position 0, preserving backward
+           compatibility.
+    """
+    if cp_size > 1:
+        cp_seg = x.size(0) // 2
+        full_seqlen = cp_size * x.size(0)
+        # Apply offset to both forward and backward segments for context parallelism
+        # offset=0: traditional behavior, freqs[0:cp_seg] and freqs[...]
+        # offset>0: exact mapping, freqs[offset+0:offset+cp_seg] and freqs[offset+...]
+        return torch.cat(
+            [
+                freqs[offset + cp_rank * cp_seg : offset + (cp_rank + 1) * cp_seg],
+                freqs[
+                    offset
+                    + full_seqlen
+                    - (cp_rank + 1) * cp_seg : offset
+                    + full_seqlen
+                    - cp_rank * cp_seg
+                ],
+            ]
+        )
+    else:
+        # For single context parallel rank:
+        # offset=0: use freqs[0:x.size(0)] (traditional)
+        # offset>0: use freqs[offset:offset+x.size(0)] (exact mapping)
+        return freqs[offset : offset + x.size(0)]
+def _apply_rotary_pos_emb_thd(
+    t: Tensor,
+    cu_seqlens: Tensor,
+    freqs: Tensor,
+    rotary_interleaved: bool = False,
+    multi_latent_attention: bool = False,
+    mscale: float = 1.0,
+    cp_group: torch.distributed.ProcessGroup = None,
+) -> Tensor:
+    """A baseline implementation of applying RoPE for `thd` format.
+    Args:
+        t (Tensor):
+def apply_rotary_pos_emb(
+    t: Tensor,
+    freqs: Tensor,
+    config: TransformerConfig,
+    cu_seqlens: Optional[Tensor] = None,
+    mscale: float = 1.0,
+    cp_group: torch.distributed.ProcessGroup = None,
+):
+def apply_rotary_pos_emb_with_cos_sin(
+    t: Tensor, cos: Tensor, sin: Tensor, rotary_interleaved: bool = False
+) -> Tensor:
+    """
+    This function applies rotary positional embedding to the target tensor t
+    using precomputed cos and sin of size (seq_len, d_rot / 2)
+    """
+    cos = cos.to(t.dtype)
+    sin = sin.to(t.dtype)
+    if apply_rotary_emb_flash is None:
+        # Combine cos and sin into freqs
+        freqs = torch.stack([cos, sin], dim=-1).flatten(start_dim=-2)
+        # Expand freqs to match t's shape
+        while freqs.dim() < t.dim():
+
+third_party/Megatron-LM/megatron/core/transformer/fsdp_dtensor_checkpoint.py
+def get_ep_layer_offset(num_experts: int | None = None) -> int:
+    """
+    Get the expert layer offset for the current model.
+    Args:
+        num_experts: Total number of experts in the model. If None, returns 0.
+    Returns:
+        The expert layer offset for the current EP rank.
+    """
+    ep_size = parallel_state.get_expert_model_parallel_world_size()
+    ep_rank = parallel_state.get_expert_model_parallel_rank()
+    num_local_experts = num_experts // ep_size if num_experts else 0
+    local_expert_offset = ep_rank * num_local_experts
+    return local_expert_offset
+def get_expert_index_from_key(key):
+def handle_experts_in_state_dict(state_dict, num_experts: int | None = None):
+def expert_param_local_key(key: str, num_experts: int | None = None) -> str:
+    """Get the module parameter corresponding to the key.
+    Args:
+        key: The parameter key to process.
+        num_experts: Total number of experts in the model. If None, no expert processing occurs.
+    Returns:
+        The local parameter key with adjusted expert indices.
+    """
+    local_expert_offset = get_ep_layer_offset(num_experts)
+    expert_index = get_expert_index_from_key(key)
+    if expert_index is not None:
+        new_expert_index = expert_index - local_expert_offset
+        # GroupedMLP: 'mlp.experts.linear_fc1.weight0', 'mlp.experts.linear_fc2.weight0'
+        if 'mlp.experts.linear_fc1.weight' in key or 'mlp.experts.linear_fc2.weight' in key:
+            new_key = key.replace(f'weight{expert_index}', f'weight{new_expert_index}')
+        # SequentialMLP: index is between 'local_experts.' and next '.'
+        elif 'mlp.experts.local_experts' in key:
+            new_key = key.replace(
+                f'local_experts.{expert_index}.', f'local_experts.{new_expert_index}.'
+            )
+        else:
+            raise ValueError(f"Unexpected expert key format: {key}")
+        key = new_key
+    return key
+def handle_swiglu_in_state_dict(model, model_state_dict, optimizer_state_dict):
+def handle_fp8_extra_state_case(model_state_dict):
+def flatten_state_dict(obj, parent_key="", sep="."):
+def print_diff_in_state_dicts(state_dict_metadata, load_state_dict, limit=100):
+def validate_loaded_state_dict(state_dict, checkpoint_path):
+def get_global_unique_param_name(model_chunks, param):
+
+third_party/Megatron-LM/megatron/core/resharding/nvshmem_copy_service/validation.py
+def generate_deterministic_data(task_id: int, size: int, device: str = "cuda") -> torch.Tensor:
+    """
+    Generate deterministic data pattern for a task.
+    Pattern: Each byte = (task_id * 31 + position) % 256
+    This creates a unique pattern per task that varies along the data.
+    Args:
+        task_id: Unique task identifier
+        size: Number of bytes to generate
+        device: Device to create tensor on ('cuda' or 'cpu')
+    Returns:
+        torch.Tensor of uint8 with deterministic pattern
+    """
+    positions = torch.arange(size, dtype=torch.int64, device=device)
+    pattern = ((task_id * 31 + positions) % 256).to(torch.uint8)
+    return pattern
+def validate_received_data(
+    task_id: int, tensor: torch.Tensor, size: int, src_pe: int = -1
+) -> ValidationResult:
+    """
+    Validate received data against expected deterministic pattern.
+    Args:
+        task_id: Task identifier to regenerate expected data
+        tensor: Received tensor to validate
+        size: Number of bytes to validate
+    Returns:
+        ValidationResult with pass/fail status and details
+    """
+    # Get the data slice to validate
+    recv_data = tensor[:size]
+    # Generate expected pattern on same device
+    expected = generate_deterministic_data(task_id, size, device=recv_data.device.type)
+    # Compare
+    mismatches_mask = recv_data != expected
+    num_mismatches = mismatches_mask.sum().item()
+    result = ValidationResult(
+        task_id=task_id,
+        size=size,
+        passed=(num_mismatches == 0),
+        src_pe=src_pe,
+        mismatches=num_mismatches,
+    )
+    if num_mismatches > 0:
+        # Find first mismatch for debugging
+        first_idx = mismatches_mask.nonzero(as_tuple=True)[0][0].item()
+        result.first_mismatch_idx = first_idx
+        result.first_mismatch_expected = expected[first_idx].item()
+        result.first_mismatch_actual = recv_data[first_idx].item()
+    return result
+def log_validation_summary(summary: ValidationSummary) -> None:
+    """Log validation summary."""
+    if summary.all_passed:
+        PELogger.info(
+            "Validation PASSED: %d/%d tasks, %d bytes validated",
+            summary.passed_tasks,
+            summary.total_tasks,
+            summary.total_bytes,
+        )
+    else:
+        PELogger.error(
+            "Validation FAILED: %d/%d tasks passed, %d failed",
+            summary.passed_tasks,
+            summary.total_tasks,
+            summary.failed_tasks,
+        )
+        # Group failures by source PE
+        failures_by_src = {}
+        for r in summary.results:
+            if not r.passed:
+                failures_by_src.setdefault(r.src_pe, []).append(r)
+        PELogger.error("  Failures by source PE:")
+        for src_pe in sorted(failures_by_src.keys()):
+
+third_party/Megatron-LM/megatron/core/models/gpt/fine_grained_callables.py
+def weak_method(method):
+def should_free_input(name, is_moe, config, num_local_experts):
+def build_transformer_layer_callables(layer: TransformerLayer):
+def build_mtp_layer_callables(layer):
+def build_layer_callables(layer):
 
 third_party/Megatron-LM/megatron/core/models/gpt/gpt_layer_specs.py
-def get_gpt_layer_with_inference_spec(
+def get_gpt_layer_with_inference_submodules(
     qk_layernorm: Optional[bool] = False,
     multi_latent_attention: Optional[bool] = False,
     qk_l2_norm: Optional[bool] = False,
-) -> ModuleSpec:
-    """Use this spec to use inference optimized linear layers.
+) -> TransformerLayerSubmodules:
+    """Use these submodules for inference optimized linear layers.
     Args:
         qk_layernorm (bool, optional):
-def get_gpt_layer_with_transformer_engine_spec(
+def get_gpt_layer_with_inference_spec(*args, **kwargs) -> ModuleSpec:
+    """Use this spec to use inference optimized linear layers."""
+    return ModuleSpec(
+        module=TransformerLayer, submodules=get_gpt_layer_with_inference_submodules(*args, **kwargs)
+    )
+def get_gpt_layer_with_transformer_engine_submodules(
     num_experts: Optional[int] = None,
     moe_grouped_gemm: Optional[bool] = False,
     qk_layernorm: Optional[bool] = False,
@@ -4189,11 +3723,18 @@ def get_gpt_layer_with_transformer_engine_spec(
     use_te_activation_func: bool = False,
     use_kitchen_attention: bool = False,
     kitchen_attention_backend: str = "sdpa",
-) -> ModuleSpec:
-    """Use this spec to use lower-level Transformer Engine modules (required for fp8 training).
+) -> TransformerLayerSubmodules:
+    """Use these submodules to use lower-level Transformer Engine modules (required for fp8
+    training).
     Args:
         num_experts (int, optional):
-def get_gpt_layer_local_spec(
+def get_gpt_layer_with_transformer_engine_spec(*args, **kwargs) -> ModuleSpec:
+    """Use this spec to use lower-level Transformer Engine modules (required for fp8 training)."""
+    return ModuleSpec(
+        module=TransformerLayer,
+        submodules=get_gpt_layer_with_transformer_engine_submodules(*args, **kwargs),
+    )
+def get_gpt_layer_local_submodules(
     num_experts: Optional[int] = None,
     moe_grouped_gemm: Optional[bool] = False,
     qk_layernorm: Optional[bool] = False,
@@ -4205,10 +3746,15 @@ def get_gpt_layer_local_spec(
     use_kitchen: bool = False,
     use_kitchen_attention: bool = False,
     kitchen_attention_backend: str = "sdpa",
-) -> ModuleSpec:
-    """Use this spec for an implementation using only modules in Megatron-Core.
+) -> TransformerLayerSubmodules:
+    """Use these submodules for an implementation using only modules in Megatron-Core.
     Args:
         num_experts (int, optional):
+def get_gpt_layer_local_spec(*args, **kwargs) -> ModuleSpec:
+    """Use this spec for an implementation using only modules in Megatron-Core."""
+    return ModuleSpec(
+        module=TransformerLayer, submodules=get_gpt_layer_local_submodules(*args, **kwargs)
+    )
 def _get_mlp_module_spec(
     use_te: Optional[bool] = True,
     num_experts: Optional[int] = None,
@@ -4393,329 +3939,384 @@ def get_gpt_mtp_block_spec_for_backend(
         return None
     if isinstance(spec, TransformerBlockSubmodules):
 
-third_party/Megatron-LM/megatron/core/optimizer/optimizer.py
-def _zero_grad_group_helper(
-    group: List[torch.nn.Parameter], set_to_none: bool, use_decoupled_grad: bool = False
+third_party/Megatron-LM/megatron/core/tokenizers/utils/build_tokenizer.py
+def build_tokenizer(args, **kwargs):
+def vocab_size_with_padding(orig_vocab_size, args, logging_enabled=True):
+def _set_padded_vocab_size(args, tokenizer):
+
+third_party/Megatron-LM/megatron/core/distributed/fsdp/src/megatron_fsdp/param_and_grad_buffer.py
+def _p_assert(cond: Any, s: str, raise_assertion_error: bool = True) -> None:
+    """Alternate to ``assert`` when in the backward context to print the error
+    message ``s`` since otherwise, it is swallowed.
+    """
+    if not cond:
+        logger.error(s)
+        logger.error(''.join(traceback.format_stack()))
+        if raise_assertion_error:
+            raise AssertionError(s)
+def _alloc_storage(tensor: torch.Tensor, size: torch.Size) -> None:
+    """
+    Allocate storage for ``tensor`` with the given size.
+    Returns:
+        bool: ``True`` if this method allocated storage and ``False`` if the
+        storage was already allocated.
+    """
+    with torch.no_grad():
+def _free_storage(tensor: torch.Tensor):
+def _pad(number_to_be_padded: int, divisor: int) -> int:
+    return int(math.ceil(number_to_be_padded / divisor) * divisor)
+def build_data_parallel_buffer_index(
+    elements: List[torch.Size],
+    data_parallel_rank: int,
+    data_parallel_world_size: int,
+    is_data_distributed: bool,
+    ddp_config: DistributedDataParallelConfig,
+    bucket_id: int = 0,
+    chunk_size_factor: int = 1,
+) -> Tuple[List[tuple], BucketIndex, ShardBucketIndex]:
+    """
+    Assuming that all input tensor elements contiguously compose a global
+    buffer, give the index range of every tensor, the bucket in the buffer,
+    and the (distributed) shard within the bucket. Note that the global bucket
+    buffer is only temporarily allocated, but is abstractly tracked via indices
+    deduced from the number of raw parameters assigned to this buffer / bucket.
+    Args:
+        elements (List[torch.Size]):
+def _get_dp_buffer_shard_bucket_index(
+    bucket_index: BucketIndex,
+    is_data_distributed: bool,
+    data_parallel_world_size: int,
+    data_parallel_rank: int,
+) -> ShardBucketIndex:
+    """
+    Build the data parallel buffer shard bucket index from the bucket index.
+    Args:
+        bucket_index (BucketIndex):
+def _get_parameter_groups(
+    module: torch.nn.Module,
+    policy: BucketingPolicy,
+    meta_device_init_fp8_params: dict,
+    bucket_group_by_fsdp_unit: bool = True,
 ):
-def _multi_tensor_copy_this_to_that(
-    this: List[torch.Tensor], that: List[torch.Tensor], overflow_buf: Optional[torch.Tensor] = None
+def gradient_reduce_preprocessing(grad_data, scaling_factor, ddp_config):
+def check_gpu_memory(threshold=0.9):
+def override_sharded_param_methods_with_safety_checks(params, all_gather_pipeline):
+def _dtype_size(dtype: torch.dtype) -> int:
+    """
+    Get the size of the dtype.
+    Args:
+        dtype (torch.dtype):
+def to_local_if_dtensor(tensor):
+def _get_fsdp_tensor_spec(
+    param, dist_index: FSDPDistributedIndex, is_sharded_param, is_expert_param
+):
+def make_fsdp_dtensor(
+    local_tensor: torch.Tensor,
+    param: torch.nn.Parameter,
+    dist_index: FSDPDistributedIndex,
+    is_sharded_param: bool = True,
+    is_expert_param: bool = False,
+    run_check: bool = False,
+    update_uneven_dtensor_chunk_meta: bool = False,
+    force_sync_tp_duplicated_param: bool = False,
 ):
 
-third_party/Megatron-LM/megatron/core/resharding/utils.py
-def _get_rank_in_group(global_rank: int, group_ranks: list[int]) -> int:
-    try:
-        return group_ranks.index(global_rank)
-    except ValueError:
-        raise ValueError(
-            f"Rank {global_rank} not found in process group {group_ranks}. "
-            f"This likely indicates a configuration mismatch."
+third_party/Megatron-LM/megatron/core/dist_checkpointing/dict_utils.py
+def extract_matching_values(
+    x: Union[dict, list], predicate: Callable[[Any], bool], return_lists_as_dicts: bool = False
+) -> Tuple[Union[dict, list], Union[dict, list]]:
+    """Return matching and nonmatching values. Keeps hierarchy.
+    Args:
+        x (Union[dict, list]) :
+def diff(x1: Any, x2: Any, prefix: Tuple = ()) -> Tuple[list, list, list]:
+    """Recursive diff of dicts.
+    Args:
+        x1 (object):
+def inspect_types(x: Any, prefix: Tuple = (), indent: int = 4):
+def nested_values(x: Union[dict, list]):
+def nested_items_iter(x: Union[dict, list]):
+def dict_map(f: Callable, d: dict):
+def dict_map_with_key(f: Callable, d: dict):
+def dict_list_map_inplace(f: Callable[[U], V], x: Union[Dict, List, U]):
+def dict_list_map_outplace(f: Callable[[U], V], x: Union[Dict, List, U]) -> Union[Dict, List, V]:
+    """Maps dicts and lists *out-of-place* with a given function."""
+    if isinstance(x, dict):
+def merge(x1: Union[dict, list], x2: Union[dict, list], key: Tuple[Union[str, int], ...] = ()):
+
+third_party/Megatron-LM/megatron/core/models/common/embeddings/yarn_rotary_pos_embedding.py
+def _yarn_find_correction_dim(
+    num_rotations: float, dim: int, rotary_base: float = 10000, max_position_embeddings: int = 2048
+) -> float:
+    return (dim * math.log(max_position_embeddings / (num_rotations * 2 * math.pi))) / (
+        2 * math.log(rotary_base)
+    )
+# Find dim range bounds based on rotations
+def _yarn_find_correction_range(
+    low_rot: float,
+    high_rot: float,
+    dim: int,
+    rotary_base: float = 10000,
+    max_position_embeddings: int = 2048,
+    round_to_int: bool = True,
+) -> tuple[int, int]:
+    low = _yarn_find_correction_dim(low_rot, dim, rotary_base, max_position_embeddings)
+    high = _yarn_find_correction_dim(high_rot, dim, rotary_base, max_position_embeddings)
+    if round_to_int:
+        low = math.floor(low)
+        high = math.ceil(high)
+    return max(low, 0), min(high, dim - 1)  # Clamp values just in case
+def _yarn_linear_ramp_mask(min: float, max: float, dim: int, device: torch.device) -> Tensor:
+    if min == max:
+        max += 0.001  # Prevent singularity
+    linear_func = (torch.arange(dim, dtype=torch.float32, device=device) - min) / (max - min)
+    ramp_func = torch.clamp(linear_func, 0, 1)
+    return ramp_func
+def _yarn_get_mscale(scale: float = 1, mscale: float = 1) -> float:
+    if scale <= 1:
+        return 1.0
+    return 0.1 * mscale * math.log(scale) + 1.0
+@lru_cache(maxsize=8)
+def _yarn_get_concentration_factor(
+    scaling_factor: float, mscale: Optional[float], mscale_all_dim: Optional[float]
+) -> float:
+    """
+    Get the concentration factor (factor multiplied to the sine and cosine components of the
+    embedding). This factor is also known as attention factor, and sometimes homonymously known as
+    "mscale"
+    """
+    if mscale is None or mscale_all_dim is None:
+        return _yarn_get_mscale(scaling_factor)
+    return float(
+        _yarn_get_mscale(scaling_factor, mscale) / _yarn_get_mscale(scaling_factor, mscale_all_dim)
+    )
+def _yarn_get_concentration_factor_from_config(config: TransformerConfig) -> float:
+    if hasattr(config, "yarn_rotary_scaling_factor"):
+
+third_party/Megatron-LM/megatron/core/models/vision/radio.py
+def fp8_pad_hook(
+    module, state_dict, prefix, local_metadata, strict, missing_keys, unexpected_keys, error_msgs
+):
+
+third_party/Megatron-LM/megatron/core/transformer/transformer_layer.py
+def get_transformer_layer_offset(
+    config: TransformerConfig, vp_stage: Optional[int] = None, pp_rank: Optional[int] = None
+):
+
+third_party/Megatron-LM/megatron/core/inference/unified_memory.py
+def _compile_timeout(timeout_s: int):
+def compile_allocator():
+def create_unified_mempool() -> "MemPool":
+    """Create a unified memory mempool using CUDA managed memory.
+    Returns:
+        (MemPool) Unified memory mempool.
+    """
+    # Attempt to compile allocator.
+    compile_allocator()
+    # Return mempool.
+    if _compilation_state != CompilationState.SUCCESS:
+        details = _compilation_error
+        if details is None:
+            details = "Unknown reason (allocator compilation did not succeed)."
+        raise UnifiedMemoryUnsupportedError(
+            "Unified virtual memory (UVM) mempool is unsupported or failed to initialize: "
+            + details
         )
-def _detect_expert_index_from_param_name(param_name: str) -> Optional[int]:
-    """Extract expert index from parameter name for TEGroupedMLP per-expert tensors."""
-    for part in param_name.split('.'):
-def assign_ep_resolved_name_inplace(
-    meta: ParameterMetadata, *, base_name: str | None = None
+    else:
+        return MemPool(allocator=_alloc)
+def _get_ctypes_lib() -> "ctypes.CDLL":
+    """Return a ctypes handle to the compiled UVM extension (.so)."""
+    global _ctypes_lib
+    compile_allocator()
+    if _compilation_state != CompilationState.SUCCESS or _so_path is None:
+        raise UnifiedMemoryUnsupportedError()
+    if _ctypes_lib is not None:
+        return _ctypes_lib
+    with _ctypes_lock:
+        if _ctypes_lib is None:
+            _ctypes_lib = ctypes.CDLL(_so_path)
+            # Configure argtypes/restype for exported helpers.
+            _ctypes_lib.managed_prefetch.argtypes = [
+                ctypes.c_void_p,
+                ctypes.c_size_t,
+                ctypes.c_int,
+                ctypes.c_void_p,
+            ]
+            _ctypes_lib.managed_prefetch.restype = ctypes.c_int
+            _ctypes_lib.managed_advise_preferred_location.argtypes = [
+                ctypes.c_void_p,
+                ctypes.c_size_t,
+                ctypes.c_int,
+            ]
+            _ctypes_lib.managed_advise_preferred_location.restype = ctypes.c_int
+            _ctypes_lib.managed_advise_accessed_by.argtypes = [
+                ctypes.c_void_p,
+                ctypes.c_size_t,
+                ctypes.c_int,
+            ]
+            _ctypes_lib.managed_advise_accessed_by.restype = ctypes.c_int
+    return _ctypes_lib
+def prefetch_managed_tensor(tensor, *, device: int, stream=None) -> None:
+    """Prefetch a CUDA tensor allocated from the UVM mempool to a specific device.
+    This uses `cudaMemPrefetchAsync` to physically migrate the pages backing the tensor.
+    The virtual address (pointer) remains unchanged, making this safe for use with
+    recorded CUDA graphs.
+    Args:
+        tensor (torch.Tensor):
+def advise_managed_tensor_preferred_location(tensor, *, device: int) -> None:
+    """Set the preferred physical location hint for a managed tensor.
+    This uses `cudaMemAdviseSetPreferredLocation`. It tells the CUDA driver where the
+    pages should ideally reside. Unlike prefetch, this is a hint and does not
+    immediately trigger migration unless the driver decides it is necessary.
+    Args:
+        tensor (torch.Tensor):
+def advise_managed_tensor_accessed_by(tensor, *, device: int) -> None:
+    """Hint that a specific device will access the managed tensor.
+    This uses `cudaMemAdviseSetAccessedBy`. It ensures that the mapping for this
+    memory region is established in the page tables of the specified device,
+    reducing page fault latency when the device first touches the data.
+    Args:
+        tensor (torch.Tensor):
+def prefetch_managed_module_parameters(
+    module, *, device: int, include_buffers: bool = False
+) -> int:
+    """Prefetch all UVM-allocated parameters (and optionally buffers) of a module.
+    Iterates through all parameters of the module and initiates an asynchronous
+    migration to the target device. This is typically used to offload weights to
+    CPU during training or prefetch them to GPU before inference.
+    Args:
+        module (torch.nn.Module):
+def advise_managed_module_parameters_preferred_location(
+    module, *, device: int, include_buffers: bool = False
 ) -> None:
-    """
-    EP-only canonicalization for per-expert parameters.
-    Under Expert Parallelism (EP), each rank owns a subset of experts with local indices
-    (e.g., rank 1 has "weight0" locally, but it's actually global expert 4). The raw param
-    name can't be used to match across source/destination because the same local name refers
-    to different global experts on different ranks. This function remaps local expert indices
-    to global indices in `resolved_name` and sets `global_expert_index`.
-    Effects:
-    - Sets meta.resolved_name (defaults to base_name/meta.name for non-EP).
-    - Sets meta.global_expert_index for per-expert parameters; otherwise leaves it as None.
-    """
-    base = meta.name if base_name is None else base_name
-    meta.resolved_name = base
-    meta.global_expert_index = None
-    if not meta.is_ep:
-        return
-    local_idx = _detect_expert_index_from_param_name(base)
-    if local_idx is None:
-        # Fused experts tensor: leave name as-is; TP planner will handle slicing
-        return
-    ep_group = meta.expert_parallel_group_ranks
-    ep_size = len(ep_group)
-    ep_local_rank = ep_group.index(meta.owner_rank)
-    experts_per_rank = meta.num_experts // ep_size
-    global_idx = ep_local_rank * experts_per_rank + local_idx
-    meta.global_expert_index = global_idx
-    # Replace trailing integer in "weightK"/"biasK" with global_idx
-    parts = base.split('.')
-    new_parts = []
-    for p in parts:
-        if p.startswith('weight') and len(p) > len('weight') and p[len('weight') :
-def assign_resolved_name_inplace(
-    meta: ParameterMetadata,
-    *,
-    layer_module_prefix_map: Mapping[str, str] | None = None,
-    base_name: str | None = None,
-) -> None:
-    """Set meta.resolved_name so the planner can match the same weights across models.
-    It rewrites PP layer indices to global layer indices (when layer_module_prefix_map is
-    provided) and
-    rewrites EP per-expert indices (weightK/biasK) to global expert indices.
-    """
-    name = meta.name if base_name is None else base_name
-    if layer_module_prefix_map:
-        name = _resolve_global_layer_number_in_name(name, layer_module_prefix_map)
-    assign_ep_resolved_name_inplace(meta, base_name=name)
-def _build_layer_module_prefix_map(module: torch.nn.Module) -> dict[str, str]:
-    """Build a mapping local_module_prefix -> global_module_prefix for PP layer modules.
-    Megatron assigns a global, 1-indexed layer_number to each transformer layer module at
-    construction time (including PP/VPP/layout offsets). We convert that to the 0-indexed naming
-    convention used in parameter names and build a map such as:
-    - "decoder.layers.0" → "decoder.layers.16"  (if layer_number == 17)
-    """
-    prefix_map: dict[str, str] = {}
-    for module_name, submodule in module.named_modules():
-def _resolve_global_layer_number_in_name(
-    name: str, layer_module_prefix_map: Mapping[str, str]
-) -> str:
-    """Rewrite a parameter name to use global layer indices (PP-aware).
-    Given a parameter name like decoder.layers.0.self_attention..., this function rewrites
-    the decoder.layers.0 prefix to the corresponding global layer index using the owning
-    layer module's layer_number.
-    Implementation:
-    - Build a {local_prefix -> global_prefix} map once (outside the per-parameter loop).
-    - Perform a longest-prefix match replacement so we only rewrite the module path portion.
-    """
-    if not layer_module_prefix_map:
-        return name
-    parts = name.split('.')
-    for i in range(len(parts), 0, -1):
-
-third_party/Megatron-LM/megatron/core/optimizer/__init__.py
-def get_standard_config_overrides(config: OptimizerConfig) -> Dict[ParamKey, ParamGroupOverride]:
-    """Get standard config overrides for the optimizer, handling decoupled LR and common wd skips.
+    """Set the preferred physical location hint for all UVM parameters in a module.
     Args:
-        config (OptimizerConfig):
-def _get_param_groups(
-    model_chunks: List[MegatronModule],
-    config: OptimizerConfig,
-    config_overrides: Optional[Dict[ParamKey, ParamGroupOverride]],
-) -> List[Dict]:
-    """Create parameter groups for optimizer.
-    Creates parameter groups from provided optimizer config object.
-    NOTE There can be more than one match between a ParamKey and a parameter.
-        What we do is merge all of the matching ParamKey overrides into a single ParamGroupOverride
-        for that parameter and use that as the key for that parameter. Any parameters that get
-        the same set of merged overrides will be mapped into the same parameter group.
-    Args:
-        model_chunks (List[MegatronModule]):
-def _get_param_groups_and_buffers(
-    model_chunks: List[MegatronModule],
-    model_chunk_offset: int,
-    config: OptimizerConfig,
-    config_overrides: Optional[Dict[ParamKey, ParamGroupOverride]],
-    filter_fn: Callable,
-    buffer_name: str,
-) -> Tuple[List[Dict], Dict[int, List[_ParamAndGradBuffer]]]:
-    """Returns parameter groups and buffer for optimizer.
-    Args:
-        model_chunks (List[MegatronModule]):
-def _get_megatron_optimizer_based_on_param_groups(
-    config: OptimizerConfig,
-    model_chunks: List[MegatronModule],
-    param_groups: List,
-    per_model_buffers: Optional[Dict[int, List[_ParamAndGradBuffer]]] = None,
-    model_parallel_group: Optional[torch.distributed.ProcessGroup] = None,
-    data_parallel_group: Optional[torch.distributed.ProcessGroup] = None,
-    data_parallel_group_gloo: Optional[torch.distributed.ProcessGroup] = None,
-    data_parallel_group_idx: Optional[int] = None,
-    intra_dist_opt_group: Optional[torch.distributed.ProcessGroup] = None,
-    distributed_optimizer_instance_id: Optional[int] = 0,
-    pg_collection: Optional[ProcessGroupCollection] = None,
-) -> MegatronOptimizer:
-    """Get Megatron optimizer based on parameter groups.
-    Args:
-        config (OptimizerConfig):
-def check_config_overrides_consistency(
-    config: OptimizerConfig, config_overrides: Optional[Dict[ParamKey, ParamGroupOverride]]
-):
-def get_megatron_optimizer(
-    config: OptimizerConfig,
-    model_chunks: List[MegatronModule],
-    config_overrides: Optional[Dict[ParamKey, ParamGroupOverride]] = None,
-    use_gloo_process_groups: bool = True,
-    pg_collection: Optional[ProcessGroupCollection] = None,
-    dump_param_to_param_group_map: Optional[str] = None,
-) -> MegatronOptimizer:
-    """Retrieve the Megatron optimizer for model chunks.
-    We use separate optimizers for expert parameters and non-expert parameters.
-    Args:
-        config (OptimizerConfig):
+        module (torch.nn.Module):
 
-third_party/Megatron-LM/megatron/core/transformer/moe/fused_a2a.py
-def get_hidden_bytes(x: torch.Tensor) -> int:
-    """Calculate the number of hidden bytes for a tensor.
+third_party/Megatron-LM/megatron/core/models/bert/bert_model.py
+def get_te_version():
+
+third_party/Megatron-LM/megatron/core/dist_checkpointing/serialization.py
+def load(
+    sharded_state_dict: ShardedStateDict,
+    checkpoint_dir: str,
+    sharded_strategy: Union[LoadShardedStrategy, Tuple[str, int], None] = None,
+    common_strategy: Union[LoadCommonStrategy, Tuple[str, int], None] = None,
+    validate_access_integrity: bool = True,
+    strict: Union[str, StrictHandling] = StrictHandling.ASSUME_OK_UNEXPECTED,
+) -> Union[StateDict, Tuple[StateDict, Set[str], Set[str]]]:
+    """Loading entrypoint.
+    In the steps below, the following verbs refer to corresponding objects:
+    - load = load from checkpoint
+    - extract = extract from sharded_state_dict
+    - add = add to the final state dict
+    Steps:
+    1. Load common state dict and form the base of the result state dict
+    2. Apply factories to sharded_state_dict
+    3. Extract LocalNonPersistentObject and add
+    4. (optional) Extract ShardedObjects, load and add
+    5. Extract ShardedBase, load, apply factory merges and add
     Args:
-        x (torch.Tensor):
-def get_buffer(group: torch.distributed.ProcessGroup, hidden_bytes: int):
-def init_hybrid_ep_buffer(
-    group: torch.distributed.ProcessGroup,
-    hidden_dim: int,
-    seq_len: int,
-    num_local_experts: int,
-    num_sms_dispatch_api: int,
-    num_sms_combine_api: int,
-    fp8_dispatch: bool,
-) -> None:
-    '''
-    Initialize the HybridEP buffer, including buffer allocation and metadata
-    initialization.
-    If a runtime dispatch/combine requires a larger buffer than the one
-    initialized, the buffer will be reallocated at runtime,
-    incuring extra run-time overhead.
+        sharded_state_dict (ShardedStateDict):
+def load_common_state_dict(checkpoint_dir: Union[str, Path]) -> StateDict:
+    """Load common (non-sharded) objects state dict from the checkpoint.
     Args:
-        group (torch.distributed.ProcessGroup):
-def reset_hybrid_ep_buffer():
-
-third_party/Megatron-LM/megatron/core/transformer/moe/grouped_gemm_util.py
-def grouped_gemm_is_available():
-def assert_grouped_gemm_is_available():
-
-third_party/Megatron-LM/megatron/core/transformer/mlp.py
-def apply_swiglu_sharded_factory(
-    original_sh_ten, sharded_offsets, singleton_local_shards: bool = False
-):
-
-third_party/Megatron-LM/megatron/core/resharding/refit.py
-def swap_model_weights(
-    src_model: LanguageModule,
-    target_model: LanguageModule,
-    refit_method: Union[RefitBackendName, CopyService],
-):
-def reshard_model_weights(
-    src_model: LanguageModule, target_model: LanguageModule, service: CopyService
-):
-
-third_party/Megatron-LM/megatron/core/transformer/moe/moe_utils.py
-def switch_load_balancing_loss_func(
-    probs: torch.Tensor,
-    tokens_per_expert: torch.Tensor,
-    total_num_tokens: int,
-    topk: int,
-    num_experts: int,
-    moe_aux_loss_coeff: float,
-    fused: bool = False,
-):
-def z_loss_func(logits, z_loss_coeff):
-def sinkhorn(cost: torch.Tensor, tol: float = 0.0001):
-def get_capacity(num_tokens: int, num_experts: int, capacity_factor: float, min_capacity=None):
-def permute(
-    tokens,
-    routing_map,
-    probs: Optional[torch.Tensor] = None,
-    num_out_tokens: Optional[int] = None,
-    fused: bool = False,
-    drop_and_pad: bool = False,
-):
-def unpermute(
-    permuted_tokens: torch.Tensor,
-    sorted_indices: torch.Tensor,
-    restore_shape: torch.Size,
-    probs: Optional[torch.Tensor] = None,
-    routing_map: Optional[torch.Tensor] = None,
-    fused: bool = False,
-    drop_and_pad: bool = False,
-):
-def sort_chunks_by_idxs(
-    input: torch.Tensor,
-    split_sizes: torch.Tensor,
-    sorted_idxs: torch.Tensor,
-    probs: Optional[torch.Tensor] = None,
-    fused: bool = False,
-):
-def group_limited_topk(
-    scores: torch.Tensor,
-    topk: int,
-    num_tokens: int,
-    num_experts: int,
-    num_groups: int,
-    group_topk: int,
-):
-def pad_routing_map(routing_map: torch.Tensor, pad_multiple: int) -> torch.Tensor:
-    """Pad the routing map to ensure each expert has a multiple of pad_multiple tokens.
-    This function ensures that each expert has a number of tokens that is a multiple of
-    pad_multiple by converting some 0s to 1s in the routing map. The padding is done by
-    selecting the first N zero elements in each row, where N is the number needed to reach
-    the next multiple of pad_multiple.
+        checkpoint_dir (str):
+def load_tensors_metadata(
+    checkpoint_dir: str, sharded_strategy: Union[LoadShardedStrategy, None] = None
+) -> CkptShardedMetadata:
+    """Load tensors metadata from the checkpoint.
+    Returns a dictionary similar to a sharded state dict, but note that
+    the dictionary keys are simply ShardedTensor keys (contrary to the
+    actual sharded state dicts where keys correspond to state dict keys).
+    Dict values are ShardedTensors without any sharding (so, the only useful
+    information is tensors global shape and dtype).
+    Concrete implementation depends on the loading strategy. If no strategy is
+    given, a default for a given backend is used.
     Args:
-        routing_map (torch.Tensor):
-def topk_routing_with_score_function(
-    logits: torch.Tensor,
-    topk: int,
-    use_pre_softmax: bool = False,
-    num_groups: Optional[int] = None,
-    group_topk: Optional[int] = None,
-    scaling_factor: Optional[float] = None,
-    score_function: str = "softmax",
-    expert_bias: Optional[torch.Tensor] = None,
-    fused: bool = False,
-):
-def compute_routing_scores_for_aux_loss(
-    logits: torch.Tensor, topk: int, score_function: str, fused: bool = False
-):
-def apply_router_token_dropping(
-    routing_probs: torch.Tensor,
-    routing_map: torch.Tensor,
-    router_topk: int,
-    capacity_factor: float,
-    drop_policy: str = "probs",
-    pad_to_capacity: bool = False,
-):
-def save_to_aux_losses_tracker(
-    name: str,
-    loss: torch.Tensor,
-    layer_number: int,
-    num_layers: int,
-    reduce_group: Optional[torch.distributed.ProcessGroup] = None,
-    avg_group: Optional[torch.distributed.ProcessGroup] = None,
-    reduce_group_has_dp: bool = False,
-):
-def clear_aux_losses_tracker():
-def reduce_aux_losses_tracker_across_ranks(
-    track_names: Optional[List[str]] = None, pg_collection: Optional[ProcessGroupCollection] = None
-):
-def track_moe_metrics(
-    loss_scale: float,
-    iteration: int,
-    writer,
-    wandb_writer=None,
-    total_loss_dict=None,
-    per_layer_logging=False,
-    force_initialize: bool = False,
-    track_names: Optional[List[str]] = None,
-    num_layers: Optional[int] = None,
-    moe_layer_freq: Optional[Union[int, List[int]]] = None,
-    mtp_num_layers: Optional[int] = None,
-    pg_collection: Optional[ProcessGroupCollection] = None,
-):
-def get_updated_expert_bias(tokens_per_expert, expert_bias, expert_bias_update_rate):
-def maybe_move_tensor_to_cpu(tensor, as_numpy=False, record_stream=False):
-def get_moe_layer_wise_logging_tracker():
-def apply_random_logits(logits):
-def router_gating_linear(
-    inp: torch.Tensor, weight: torch.Tensor, bias: torch.Tensor, router_dtype: torch.dtype
-):
-def get_align_size_for_quantization(config: TransformerConfig):
-def get_default_pg_collection():
-def maybe_skip_or_early_return_by_cudagraph(step_condition):
+        checkpoint_dir (str):
+def load_sharded_metadata(
+    checkpoint_dir: str,
+    sharded_strategy: Union[LoadShardedStrategy, None] = None,
+    common_strategy: Union[LoadCommonStrategy, None] = None,
+) -> CkptShardedMetadata:
+    """Load sharded metadata from the checkpoint.
+    Similar to `load_tensors_metadata`, but includes also ShardedObjects.
+    Returns a dictionary similar to a sharded state dict, but note that
+    the dictionary keys are simply ShardedTensor keys (contrary to the
+    actual sharded state dicts where keys correspond to state dict keys).
+    Dict values are ShardedTensors without any sharding (so, the only useful
+    information is tensors global shape and dtype).
+    Concrete implementation depends on the loading strategy. If no strategy is
+    given, a default for a given backend is used.
+    Args:
+        checkpoint_dir (str):
+def load_plain_tensors(checkpoint_dir: str) -> StateDict:
+    """Load checkpoint tensors without any sharding and plain structure.
+    NOTE: common state dict is NOT included.
+    Args:
+        checkpoint_dir (str):
+def load_content_metadata(
+    checkpoint_dir: Optional[str] = None, *, preloaded_state_dict: Optional[StateDict] = None
+) -> Optional[dict]:
+    """Load content metadata stored in the checkpoint with `save(..., content_metadata=...)`.
+    Args:
+        checkpoint_dir (str, optional):
+def remove_sharded_tensors(checkpoint_dir: str, key_prefix: str):
+def save(
+    sharded_state_dict: ShardedStateDict,
+    checkpoint_dir: str,
+    sharded_strategy: Union[SaveShardedStrategy, Tuple[str, int], None] = None,
+    common_strategy: Union[SaveCommonStrategy, Tuple[str, int], None] = None,
+    validate_access_integrity: bool = True,
+    async_sharded_save: bool = False,
+    preprocess_common_before_consistancy_check: Optional[
+        Callable[[CommonStateDict], StateDict]
+    ] = None,
+    content_metadata: Optional[dict] = None,
+) -> Optional[AsyncRequest]:
+    """Saving entrypoint.
+    Extracts ShardedTensors from the given state dict. Rank 0 saves the
+    "regular" part of the checkpoint to common torch file.
+    The ShardedTensors are saved according to a strategy specified by the
+    config.
+    Steps:
+    1. Apply factories
+    2. Extract and discard LocalNonPersistentObject
+    3. Extract all ShardedBase object
+    4. Save all other objects to common.pt
+    5. (optional) Extract and save ShardedObjects
+    6. Save all ShardedBase objects
+    7. Write metadata.json file with backend and version metadata.
+    Step (6) can be performed asynchronously (see `async_sharded_save`), in this
+    case the actual save is embodied in the returned async request and can be
+    scheduled by the external caller. For async request, step (7) is added as
+    one of the finalization functions, so that metadata.json is written only
+    if the checkpoint is complete.
+    Args:
+        sharded_state_dict (ShardedStateDict):
 
-third_party/Megatron-LM/megatron/core/transformer/moe/shared_experts.py
-def set_tensor_grad_fn_sequence_sr(tensor, value):
+third_party/Megatron-LM/megatron/core/inference/inference_request.py
+def serialize_tensor(tensor: torch.Tensor) -> List:
+    """Serialize tensor to bytes.
+    Args:
+        tensor (Tensor):
+def deserialize_tensor(tensor_as_list: List) -> torch.Tensor:
+    """Deserialize tensor from bytes.
+    Args:
+        tensor_as_list (List):
 
-third_party/Megatron-LM/megatron/core/transformer/moe/upcycling_utils.py
-def _get_keys_endswith(model, suffix):
-def _find_submodule(model, submodule_name):
-def _get_config(moe_model, dense_model):
-def _convert_to_moe_state_dict(moe_model, dense_model):
-def upcycle_state_dict(moe_model, dense_model):
-def load_and_upcycle_model(
-    load_dense_ckpt_func, moe_model, dense_model, strict=True, load_args=(), load_kwargs={}
+third_party/Megatron-LM/megatron/core/models/vision/clip_vit_model.py
+def get_num_image_embeddings(
+    img_h,
+    img_w,
+    patch_dim,
+    vision_model_type,
+    disable_vision_class_token,
+    class_token_len,
+    pixel_shuffle,
+    use_tile_tags=False,
+    max_num_tiles=0,
+    tokenizer_type=None,
 ):
 
 third_party/Megatron-LM/megatron/core/transformer/utils.py
@@ -4787,7 +4388,7 @@ def sharded_state_dict_default(
 def _init_sequence_parallel_cache(model, exclude_modules):
 def set_model_to_sequence_parallel(model, set_to=False, exclude_modules=None):
 def init_cuda_graph_cache(model):
-def toggle_cuda_graphs(model, set_to="none", reset_cuda_graphs=True):
+def toggle_cuda_graphs(model, set_to="none"):
 def is_layer_window_attention(
     window_size: Optional[Tuple[int, int]], window_attn_skip_freq: int | list, layer_number: int
 ) -> bool:
@@ -4798,56 +4399,479 @@ def is_layer_window_attention(
         return True
     if isinstance(window_attn_skip_freq, int):
 
+third_party/Megatron-LM/megatron/core/models/bert/bert_layer_specs.py
+def get_bert_layer_with_transformer_engine_submodules() -> TransformerLayerSubmodules:
+    """Use these submodules to use lower-level Transformer Engine modules (required for fp8
+    training).
+    Returns:
+        TransformerLayerSubmodules: Submodules with TE modules.
+    """
+    if not HAVE_TE:
+        raise ImportError(
+            "Transformer Engine is not installed. Please use local Bert layer spec instead."
+        )
+    return TransformerLayerSubmodules(
+        self_attention=ModuleSpec(
+            module=SelfAttention,
+            params={"attn_mask_type": AttnMaskType.padding},
+            submodules=SelfAttentionSubmodules(
+                linear_qkv=not_none(TELayerNormColumnParallelLinear),
+                core_attention=not_none(TEDotProductAttention),
+                linear_proj=not_none(TERowParallelLinear),
+                q_layernorm=IdentityOp,
+                k_layernorm=IdentityOp,
+            ),
+        ),
+        self_attn_bda=get_bias_dropout_add,
+        mlp=ModuleSpec(
+            module=MLP,
+            submodules=MLPSubmodules(
+                linear_fc1=not_none(TELayerNormColumnParallelLinear),
+                linear_fc2=not_none(TERowParallelLinear),
+            ),
+        ),
+        mlp_bda=get_bias_dropout_add,
+    )
+def get_bert_layer_with_transformer_engine_spec():
+def __getattr__(name):
+
+third_party/Megatron-LM/megatron/core/transformer/moe/upcycling_utils.py
+def _get_keys_endswith(model, suffix):
+def _find_submodule(model, submodule_name):
+def _get_config(moe_model, dense_model):
+def _convert_to_moe_state_dict(moe_model, dense_model):
+def upcycle_state_dict(moe_model, dense_model):
+def load_and_upcycle_model(
+    load_dense_ckpt_func, moe_model, dense_model, strict=True, load_args=(), load_kwargs={}
+):
+
+third_party/Megatron-LM/megatron/core/inference/communication_utils.py
+def is_pipeline_first_stage(pp_group: ProcessGroup):
+def is_pipeline_last_stage(pp_group: ProcessGroup):
+def _is_cuda(tensor):
+def _is_cuda_contiguous(tensor):
+def broadcast_from_last_pipeline_stage(
+    size: List[int],
+    dtype: torch.dtype,
+    tensor: Optional[torch.Tensor] = None,
+    pp_group: Optional[ProcessGroup] = None,
+):
+def recv_from_prev_pipeline_rank_(
+    recv_buffer: torch.Tensor = None, pp_group: Optional[ProcessGroup] = None
+):
+def send_to_next_pipeline_rank(
+    tensor: torch.Tensor = None, pp_group: Optional[ProcessGroup] = None
+):
+def broadcast_tensor(size, dtype, tensor=None, rank=0, data_parallel=False):
+def broadcast_list(size, dtype, list_values=None, rank=0, data_parallel=False):
+def broadcast_int_list(size, int_list=None, rank=0, data_parallel=False):
+def broadcast_float_list(size, float_list=None, rank=0, data_parallel=False):
+
+third_party/Megatron-LM/megatron/core/distributed/fsdp/src/megatron_fsdp/utils.py
+def get_te_version():
+def is_te_min_version(vers, check_equality=True):
+def is_submodule(module, parent_module, strict=True):
+def get_mesh_names(
+    device_mesh: Optional[DeviceMesh] = None, only_submesh_dims: bool = False
+) -> list[str]:
+    """
+    Get all the sub-mesh ("dp", "cp", etc.) and flattened-mesh ("dp_cp", etc.) names
+    in the DeviceMesh. When only_submesh_dims=True, only checks for sub-mesh dimensions.
+    """
+    if device_mesh is None:
+        # Device mesh does not exist.
+        return []
+    # Sub-mesh dimension names.
+    submesh_dim_names = (
+        list(device_mesh.mesh_dim_names) if device_mesh.mesh_dim_names is not None else []
+    )
+    # Flattened mesh dimension names.
+    try:
+        # Retrieve all flattened meshes associated with DeviceMesh.
+        # The flattened DeviceMesh are all located in the _flatten_mapping
+        # dictionary of the root DeviceMesh.
+        flatten_mesh_names = [
+            flat_dim
+            for flat_dim, flat_mesh in device_mesh._get_root_mesh()._flatten_mapping.items()
+        ]
+    except AttributeError:
+        # Fallback to the DeviceMesh global state to retrieve flattened
+        # meshes associated with the DeviceMesh.
+        from torch.distributed.device_mesh import _mesh_resources
+        flatten_mesh_names = [
+            child_mesh_dim_name
+            for child_mesh, root_mesh in _mesh_resources.child_to_root_mapping.items()
+            for child_mesh_dim_name in (child_mesh.mesh_dim_names or [])
+            if root_mesh == device_mesh and child_mesh_dim_name not in submesh_dim_names
+        ]
+    # Order of the returned list of mesh dimension names must match the index
+    # of the root mesh dimension names followed by flattened sub-meshes:
+    # [<root mesh dimension names>, <flattened mesh dimension names>]
+    if only_submesh_dims:
+        return submesh_dim_names
+    else:
+        return submesh_dim_names + flatten_mesh_names
+def contains_submesh(
+    device_mesh: Optional[DeviceMesh], submesh_names: Optional[str | Sequence[str]]
+) -> bool:
+    """
+    Check if a sub-mesh exists in the device mesh by name.
+    """
+    if device_mesh is None or submesh_names is None:
+        # Device mesh does not exist.
+        return False
+    if isinstance(submesh_names, str):
+def _get_cuda_rng_state(
+    device: Union[int, str, torch.device] = "cuda", clone: bool = False, graph_safe: bool = False
+) -> torch.Tensor:
+    """Return the random number generator state of the specified GPU.
+    Arguments:
+        device (int):
+def _set_cuda_rng_state(new_state: torch.Tensor, device: int = -1, graph_safe: bool = False):
+def initialize_rng_tracker(
+    use_te_rng_tracker: bool = False,
+    inference_rng_tracker: bool = False,
+    use_cudagraphable_rng: bool = False,
+    force_reset: bool = False,
+):
+def get_cuda_rng_tracker(
+    use_te_rng_tracker: bool = False,
+    inference_rng_tracker: bool = False,
+    use_cudagraphable_rng: bool = False,
+):
+def get_global_memory_buffer():
+def create_updated_function_signature(original_function, **extended_kwargs: dict):
+def is_mcore_tensor_model_parallel(param: torch.Tensor) -> bool:
+    """
+    Check if the given parameter is Megatron-Core tensor model parallel.
+    """
+    return getattr(param, "_mcore_tp", False) or getattr(param, "tensor_model_parallel", False)
+def is_mcore_tensor_parallel_duplicated(param: torch.Tensor) -> bool:
+    """
+    Check if the given parameter is Megatron-Core tensor model parallel and duplicated.
+    """
+    return getattr(param, "_tp_duplicated", False)
+def get_mcore_tensor_parallel_partition_dim(param: torch.Tensor) -> Optional[int]:
+    """
+    Get the partition dimension for a Megatron-Core tensor model parallel parameter.
+    """
+    if is_mcore_tensor_model_parallel(param):
+
+third_party/Megatron-LM/megatron/core/transformer/moe/moe_utils.py
+def switch_load_balancing_loss_func(
+    probs: torch.Tensor,
+    tokens_per_expert: torch.Tensor,
+    total_num_tokens: int,
+    topk: int,
+    num_experts: int,
+    moe_aux_loss_coeff: float,
+    fused: bool = False,
+    padding_mask: Optional[torch.Tensor] = None,
+) -> torch.Tensor:
+    """Calculate the auxiliary loss for load balancing.
+    Refer to the Switch Transformer (https://arxiv.org/abs/2101.03961)
+    and Global Load Balancing Loss(https://arxiv.org/abs/2501.11873) for details.
+    ### Detailed explanation of the auxiliary loss #######
+    The formula for the auxiliary loss is:
+        loss = E * Σ_{i=1}^{E} (f_i * P_i)
+    where:
+        f_i = 1 / (T * topk) * Σ_{x∈B} routing_map(x, i)
+             (fraction of tokens dispatched to expert i)
+        P_i = 1 / T * Σ_{x∈B} probs(x, i)
+             (averaged router probability allocated for expert i)
+        E is the number of experts
+        T is the total number of tokens in the batch B
+    For distributed training with sequence or context parallelism, each rank can
+    process a subset of the batch.
+        loss = E * Σ_{i=1}^{E} (f_i * Σ_{j=1}^{N} P_ij)
+             = E * Σ_{i=1}^{E} Σ_{j=1}^{N} (f_i * P_ij)
+             = Σ_{j=1}^{N} E * (Σ_{i=1}^{E} f_i * P_ij)
+    where:
+        f_i = 1 / (T * topk) * Σ_{x∈B} routing_map(x, i)
+             (fraction of tokens dispatched to expert i in the global batch)
+        P_ij = 1 / T * Σ_{x∈B_j} probs(x, i)
+              (averaged router probability allocated for expert i in local batch of the j-th rank)
+        N is the number of ranks
+        B_j is the batch of tokens in the j-th rank
+        T is the total number of tokens in the global batch B
+    Note:
+    To calculate the auxiliary loss at different levels (micro-batch or global batch):
+def z_loss_func(
+    logits: torch.Tensor, z_loss_coeff: float, padding_mask: Optional[torch.Tensor] = None
+) -> torch.Tensor:
+    """Encourages the router's logits to remain small to enhance stability.
+    Please refer to the ST-MoE paper (https://arxiv.org/pdf/2202.08906.pdf) for details.
+    Args:
+        logits (torch.Tensor):
+def sinkhorn(cost: torch.Tensor, tol: float = 0.0001) -> torch.Tensor:
+    """Sinkhorn based MoE routing function.
+    Args:
+        cost (torch.Tensor):
+def get_capacity(
+    num_tokens: int, num_experts: int, capacity_factor: float, min_capacity: Optional[int] = None
+) -> int:
+    """
+    Calculate the capacity of each expert.
+    Args:
+        num_tokens (int):
+def get_tokens_per_expert_and_token_count(
+    routing_map: torch.Tensor,
+    reduce_group: torch.distributed.ProcessGroup,
+    topk: int = None,
+    with_padding_mask: bool = False,
+) -> torch.Tensor:
+    """
+    Compute global_tokens_per_expert, local_num_tokens and total_num_tokens with padding mask.
+    """
+    local_tokens_per_expert = routing_map.sum(dim=0)
+    global_tokens_per_expert = reduce_from_tensor_model_parallel_region(
+        local_tokens_per_expert, reduce_group
+    )
+    if with_padding_mask:
+        local_num_tokens = local_tokens_per_expert.sum() / topk
+        total_num_tokens = global_tokens_per_expert.sum() / topk
+    else:
+        local_num_tokens = routing_map.shape[0]
+        total_num_tokens = local_num_tokens * reduce_group.size()
+    return global_tokens_per_expert, local_num_tokens, total_num_tokens
+class MoEAuxLossAutoScaler(torch.autograd.Function):
+def permute(
+    tokens: torch.Tensor,
+    routing_map: torch.Tensor,
+    probs: Optional[torch.Tensor] = None,
+    num_out_tokens: Optional[int] = None,
+    fused: bool = False,
+    drop_and_pad: bool = False,
+    tokens_per_expert: Optional[torch.Tensor] = None,
+    align_size: int = -1,
+) -> Tuple[
+    torch.Tensor,
+    Optional[torch.Tensor],
+    torch.Tensor,
+    Optional[torch.Tensor],
+    Optional[torch.Tensor],
+]:
+    """Permute the tokens and probs based on the mask.
+    Tokens with the same designated expert will be grouped together.
+    The shape of mask is [tokens, num_experts], it indicates which experts were selected
+    by each token.
+    When drop_and_pad=True, in routing_map, the number of non-zeros in each column equals to
+    expert capacity. This function exploits this feature to use ops that support cuda graph.
+    If the fused permute and pad kernel is available, it will pad the tokens to the align_size
+    and return the padded permuted tokens, pad_offsets and padded tokens per expert.
+    Args:
+        tokens (torch.Tensor):
+def unpermute(
+    permuted_tokens: torch.Tensor,
+    sorted_indices: torch.Tensor,
+    restore_shape: torch.Size,
+    probs: Optional[torch.Tensor] = None,
+    routing_map: Optional[torch.Tensor] = None,
+    fused: bool = False,
+    drop_and_pad: bool = False,
+    pad_offsets: Optional[torch.Tensor] = None,
+) -> torch.Tensor:
+    """
+    Restore the original order of tokens after permutation. If probs are provided, it
+    will also apply them to the tokens before restoring the order.
+    When drop_and_pad=True, the tensors will have the following properties:
+      - In routing_map, the number of non-zeros in each column equals to expert capacity
+      - The size of sorted_indices equals to num_experts * capacity, each split of `capacity`
+        contains the indices of tokens routed to an expert.
+    This function exploits these features to use ops that support cuda graph.
+    Args:
+        permuted_tokens (torch.Tensor):
+def sort_chunks_by_idxs(
+    input: torch.Tensor,
+    split_sizes: torch.Tensor,
+    sorted_idxs: torch.Tensor,
+    probs: Optional[torch.Tensor] = None,
+    fused: bool = False,
+) -> Tuple[torch.Tensor, Optional[torch.Tensor]]:
+    """Split and sort the input tensor based on the split_sizes and sorted indices.
+    Args:
+        input (torch.Tensor):
+def group_limited_topk(
+    scores: torch.Tensor,
+    topk: int,
+    num_tokens: int,
+    num_experts: int,
+    num_groups: int,
+    group_topk: int,
+) -> Tuple[torch.Tensor, torch.Tensor]:
+    """Perform top-k routing on a subset of expert groups.
+    When using group-limited routing:
+    1. Experts are divided into 'moe_router_num_groups' equal-sized groups
+    2. For each token, 'moe_router_group_topk' groups are selected based on routing scores
+       (specifically, the sum of top-2 expert scores within each group)
+    3. From these selected groups, 'moe_router_topk' individual experts are chosen
+    Two common use cases:
+    - Device-limited routing: Set 'moe_router_num_groups' equal to expert parallel size (EP)
+      to limit each token to experts on a subset of devices
+      (See DeepSeek-V2: https://arxiv.org/pdf/2405.04434)
+    - Node-limited routing: Set 'moe_router_num_groups' equal to number of nodes in EP group
+      to limit each token to experts on a subset of nodes
+      (See DeepSeek-V3: https://arxiv.org/pdf/2412.19437)
+    Args:
+        scores (torch.Tensor):
+def pad_routing_map(routing_map: torch.Tensor, pad_multiple: int) -> torch.Tensor:
+    """Pad the routing map to ensure each expert has a multiple of pad_multiple tokens.
+    This function ensures that each expert has a number of tokens that is a multiple of
+    pad_multiple by converting some 0s to 1s in the routing map. The padding is done by
+    selecting the first N zero elements in each row, where N is the number needed to reach
+    the next multiple of pad_multiple.
+    Args:
+        routing_map (torch.Tensor):
+def topk_routing_with_score_function(
+    logits: torch.Tensor,
+    topk: int,
+    use_pre_softmax: bool = False,
+    num_groups: Optional[int] = None,
+    group_topk: Optional[int] = None,
+    scaling_factor: Optional[float] = None,
+    score_function: str = "softmax",
+    expert_bias: Optional[torch.Tensor] = None,
+    fused: bool = False,
+    router_replay: Optional['RouterReplay'] = None,
+) -> Tuple[torch.Tensor, torch.Tensor]:
+    """Compute the routing probabilities and map for top-k selection with score function.
+    Args:
+        logits (torch.Tensor):
+def compute_routing_scores_for_aux_loss(
+    logits: torch.Tensor,
+    topk: int,
+    score_function: str,
+    fused: bool = False,
+    padding_mask: Optional[torch.Tensor] = None,
+) -> Tuple[torch.Tensor, torch.Tensor]:
+    """Compute routing scores based on the score function.
+    Args:
+        logits (torch.Tensor):
+def apply_router_token_dropping(
+    routing_probs: torch.Tensor,
+    routing_map: torch.Tensor,
+    router_topk: int,
+    capacity_factor: float,
+    drop_policy: str = "probs",
+    pad_to_capacity: bool = False,
+) -> Tuple[torch.Tensor, torch.Tensor]:
+    """Apply token dropping to top-k expert selection.
+    This function enforces expert capacity limits by dropping tokens that exceed
+    the capacity and optionally padding to capacity.
+    Args:
+        routing_probs (torch.Tensor):
+def save_to_aux_losses_tracker(
+    name: str,
+    loss: torch.Tensor,
+    layer_number: int,
+    num_layers: int,
+    reduce_group: Optional[torch.distributed.ProcessGroup] = None,
+    avg_group: Optional[torch.distributed.ProcessGroup] = None,
+    reduce_group_has_dp: bool = False,
+) -> None:
+    """Save the auxiliary loss for logging.
+    Args:
+        name (str):
+def clear_aux_losses_tracker() -> None:
+    """Clear the auxiliary losses."""
+    tracker = get_moe_layer_wise_logging_tracker()
+    for name in tracker:
+        tracker[name]["values"].zero_()
+def reduce_aux_losses_tracker_across_ranks(
+    track_names: Optional[List[str]] = None, pg_collection: Optional[ProcessGroupCollection] = None
+) -> None:
+    """Collect and reduce the auxiliary losses across ranks.
+    Args:
+        track_names (Optional[List[str]], optional):
+def track_moe_metrics(
+    loss_scale: float,
+    iteration: int,
+    writer: Optional["SummaryWriter"] = None,
+    wandb_writer: Optional["wandb.Run"] = None,
+    total_loss_dict: Optional[dict[str, torch.Tensor]] = None,
+    per_layer_logging: bool = False,
+    force_initialize: bool = False,
+    track_names: Optional[List[str]] = None,
+    num_layers: Optional[int] = None,
+    moe_layer_freq: Optional[Union[int, List[int]]] = None,
+    mtp_num_layers: Optional[int] = None,
+    pg_collection: Optional[ProcessGroupCollection] = None,
+) -> None:
+    """Track the MoE metrics for logging.
+    Args:
+        loss_scale (float):
+def get_updated_expert_bias(
+    tokens_per_expert: torch.Tensor, expert_bias: torch.Tensor, expert_bias_update_rate: float
+) -> torch.Tensor:
+    """Update expert bias for biased expert routing. See https://arxiv.org/abs/2408.15664v1#
+    Args:
+        tokens_per_expert (torch.Tensor):
+def maybe_move_tensor_to_cpu(
+    tensor: torch.Tensor, as_numpy: bool = False, record_stream: bool = False
+) -> torch.Tensor:
+    """Move a tensor to CPU if it is on GPU.
+    Args:
+        tensor (torch.Tensor):
+def get_moe_layer_wise_logging_tracker() -> dict:
+    """Return the moe layer wise tracker."""
+    global _MOE_LAYER_WISE_LOGGING_TRACKER
+    return _MOE_LAYER_WISE_LOGGING_TRACKER
+@internal_api
+class RandomSTE(torch.autograd.Function):
+def apply_random_logits(logits: torch.Tensor) -> torch.Tensor:
+    """
+    Apply the RandomSTE function to the logits.
+    Args:
+        logits (torch.Tensor):
+def router_gating_linear(
+    inp: torch.Tensor, weight: torch.Tensor, bias: Optional[torch.Tensor], router_dtype: torch.dtype
+) -> torch.Tensor:
+    """
+    Customized linear layer for router gating.
+    This linear layer accepts bfloat16 input and weight, and can return output with router_dtype.
+    It can reduce the memory usage by avoiding saving the intermediate high precision tensors.
+    Args:
+        inp (torch.Tensor):
+def get_align_size_for_quantization(config: TransformerConfig) -> int:
+    """Get the alignment size for quantization.
+    Args:
+        config (TransformerConfig):
+def get_default_pg_collection() -> ProcessGroupCollection:
+    """Get the default process groups for MoE.
+    Returns:
+        ProcessGroupCollection: The default process groups for MoE.
+    """
+    pg_collection = ProcessGroupCollection()
+    pg_collection.ep = parallel_state.get_expert_model_parallel_group()
+    pg_collection.tp = parallel_state.get_tensor_model_parallel_group()
+    pg_collection.cp = parallel_state.get_context_parallel_group()
+    pg_collection.expt_tp = parallel_state.get_expert_tensor_parallel_group()
+    pg_collection.expt_dp = parallel_state.get_expert_data_parallel_group()
+    pg_collection.tp_ep = parallel_state.get_expert_tensor_and_model_parallel_group()
+    pg_collection.tp_cp = parallel_state.get_tensor_and_context_parallel_group()
+    pg_collection.tp_dp_cp = parallel_state.get_tensor_and_data_parallel_group(
+        with_context_parallel=True
+    )
+    return pg_collection
+class MoECudaGraphPartialCaptureSignal(Exception):
+def maybe_skip_or_early_return_by_cudagraph(step_condition):
+
+third_party/Megatron-LM/megatron/core/dist_checkpointing/mapping.py
+def is_main_replica(replica_id: ReplicaId):
+def apply_factories(sharded_state_dict: ShardedStateDict):
+def apply_factory_merges(
+    x1: StateDict, x2: ShardedStateDict, key: Tuple[str, ...] = ()
+) -> StateDict:
+    """Apply merges defined by ShardedTensorFactories *in-place*.
+    Args:
+        x1 (StateDict):
+
+third_party/Megatron-LM/megatron/core/transformer/moe/shared_experts.py
+def set_tensor_grad_fn_sequence_sr(tensor, value):
+
 third_party/Megatron-LM/megatron/core/ssm/triton_cache_manager.py
 def _version_no_greater_than(version, version_limit):
 def default_cache_dir():
-
-third_party/Megatron-LM/megatron/core/transformer/fsdp_dtensor_checkpoint.py
-def get_ep_layer_offset(num_experts: int | None = None) -> int:
-    """
-    Get the expert layer offset for the current model.
-    Args:
-        num_experts: Total number of experts in the model. If None, returns 0.
-    Returns:
-        The expert layer offset for the current EP rank.
-    """
-    ep_size = parallel_state.get_expert_model_parallel_world_size()
-    ep_rank = parallel_state.get_expert_model_parallel_rank()
-    num_local_experts = num_experts // ep_size if num_experts else 0
-    local_expert_offset = ep_rank * num_local_experts
-    return local_expert_offset
-def get_expert_index_from_key(key):
-def handle_experts_in_state_dict(state_dict, num_experts: int | None = None):
-def expert_param_local_key(key: str, num_experts: int | None = None) -> str:
-    """Get the module parameter corresponding to the key.
-    Args:
-        key: The parameter key to process.
-        num_experts: Total number of experts in the model. If None, no expert processing occurs.
-    Returns:
-        The local parameter key with adjusted expert indices.
-    """
-    local_expert_offset = get_ep_layer_offset(num_experts)
-    expert_index = get_expert_index_from_key(key)
-    if expert_index is not None:
-        new_expert_index = expert_index - local_expert_offset
-        # GroupedMLP: 'mlp.experts.linear_fc1.weight0', 'mlp.experts.linear_fc2.weight0'
-        if 'mlp.experts.linear_fc1.weight' in key or 'mlp.experts.linear_fc2.weight' in key:
-            new_key = key.replace(f'weight{expert_index}', f'weight{new_expert_index}')
-        # SequentialMLP: index is between 'local_experts.' and next '.'
-        elif 'mlp.experts.local_experts' in key:
-            new_key = key.replace(
-                f'local_experts.{expert_index}.', f'local_experts.{new_expert_index}.'
-            )
-        else:
-            raise ValueError(f"Unexpected expert key format: {key}")
-        key = new_key
-    return key
-def handle_swiglu_in_state_dict(model, model_state_dict, optimizer_state_dict):
-def handle_fp8_extra_state_case(model_state_dict):
-def flatten_state_dict(obj, parent_key="", sep="."):
-def print_diff_in_state_dicts(state_dict_metadata, load_state_dict, limit=100):
-def validate_loaded_state_dict(state_dict, checkpoint_path):
-def get_global_unique_param_name(model_chunks, param):
 
 third_party/Megatron-LM/megatron/core/ssm/gated_delta_net.py
 def _split_tensor_factory(
@@ -4882,231 +4906,323 @@ def torch_chunk_gated_delta_rule(
     use_qk_l2norm_in_kernel=False,
 ):
 
-third_party/Megatron-LM/megatron/core/datasets/helpers.py
-def build_sample_idx(
-    sizes: numpy.ndarray,
-    document_indices: numpy.ndarray,
-    sequence_length: int,
-    num_epochs: int,
-    tokens_per_epoch: int,
-    drop_last_partial_sequence: bool = True,
-    add_extra_token_to_sequence: bool = True,
+third_party/Megatron-LM/megatron/core/dist_checkpointing/validation.py
+def parse_strict_flag(strict: Union[str, StrictHandling]) -> StrictHandling:
+    """Parse user passed strict flag from a string to StrictHandling instance.
+    Args:
+        strict (str, StrictHandling):
+def validate_integrity_and_strict_load(
+    sharded_state_dict: ShardedStateDict,
+    strict: StrictHandling,
+    validate_access_integrity: bool,
+    local_metadata: Optional[_LocalMetadata] = None,
+    global_metadata: Optional[_GlobalMetadata] = None,
+    ckpt_sharded_metadata: Optional["CkptShardedMetadata"] = None,
+) -> Tuple[ShardedStateDict, Set[str], Set[str]]:
+    """Validates sharding integrity and potential mismatches with the checkpoint.
+    `validate_access_integrity` controls sharding integrity check (orthogonal
+    to strictness checking) which verifies `sharded_state_dict` runtime completeness
+    (in isolation from the actual checkpoint).
+    `strict` flag controls handling of mismatches between the requested
+    sharded state dict to load and the actual checkpoint. See `StrictHandling`
+    docs for details regarding flag behavior and performance implications
+    (disk interactions or inter-rank communication).
+    Args:
+        sharded_state_dict (ShardedStateDict):
+def verify_checkpoint_and_load_strategy(
+    checkpoint_dir: str,
+    sharded_strategy: Union[LoadShardedStrategy, Tuple[str, int], None] = None,
+    common_strategy: Union[LoadCommonStrategy, Tuple[str, int], None] = None,
+) -> Tuple[LoadShardedStrategy, LoadCommonStrategy]:
+    """Verifies if checkpoint metadata exists and matches given strategies.
+    If no strategies are passed, they are determined based on the checkpoint metadata.
+    Args:
+        checkpoint_dir (str):
+def adjust_non_strict_load(
+    sharded_state_dict: ShardedStateDict, sharded_keys_to_remove: Set[str]
+) -> ShardedStateDict:
+    """Adjusts sharded state dict removing keys not existing in the checkpoint.
+    Args:
+        sharded_state_dict (ShardedStateDict):
+def _determine_missing_and_unexpected_keys(
+    ckpt_sharded_metadata: "CkptShardedMetadata",
+    local_metadata: _LocalMetadata,
+    global_metadata: Optional[_GlobalMetadata] = None,
+) -> Tuple[Set[str], Set[str]]:
+    """Determines load mismatches based on metadata.
+    There is an asymmetry between "unexpected" and "missing" keys.
+    Unexpected keys can be determined based only on local metadata.
+    Missing keys must be based on global metadata, since other ranks might access
+    different keys than the current rank.
+    In consequence, the return value of this function is different on each rank:
+    "missing_keys" are equal, but "unexpected_keys" might differ across ranks.
+    Args:
+        ckpt_sharded_metadata (CkptShardedMetadata):
+def maybe_report_missing_and_unexpected_keys(
+    missing_keys: Set[str], unexpected_keys: Set[str], raise_error: bool = True
+) -> None:
+    """Raises or logs an error in case missing or unexpected keys are non-empty.
+    Args:
+        missing_keys (Set[str]):
+def _validate_common_state_dict(common_state_dict: CommonStateDict) -> None:
+    """Validate consistancy across ranks for the common state dict
+    We save the common state dict only on rank 0. We validate to make sure that the common dict is consistent across ranks before saving.
+    Args:
+        common_state_dict: The common state dict present in all ransk
+    """
+    if not torch.distributed.is_initialized():
+def validate_sharding_integrity(
+    global_metadata: _GlobalMetadata, common_state_dict: CommonStateDict = None
+) -> None:
+    """Validate if the ShardedTensors and ShardedObjects from multiple processes define correct sharding.
+    Local ShardedTensors and ShardedObject metadata is exchanged with `torch.distributed.all_gather_object`
+    and then process with global rank 0 checks if main replicas of the shards:
+    - cover the whole global tensors
+    - don't overlap
+    Args:
+        global_metadata (_GlobalMetadata):
+def _validate_sharding_for_key(
+    rank_sharding: List[Tuple[int, ShardedTensor]]
+) -> List[CheckpointingException]:
+    some_rank_shard = rank_sharding[0][1]
+    global_shape = some_rank_shard.global_shape
+    local_shape = some_rank_shard.local_shape
+    dtype = some_rank_shard.dtype
+    has_regular_sharding_grid = some_rank_shard.has_regular_grid
+    for rank, sharding in rank_sharding:
+        assert sharding.dtype == dtype, (sharding.dtype, dtype, some_rank_shard)
+        assert sharding.global_shape == global_shape, (
+            sharding.global_shape,
+            global_shape,
+            some_rank_shard,
+        )
+        assert sharding.has_regular_grid == has_regular_sharding_grid, (
+            has_regular_sharding_grid,
+            some_rank_shard,
+        )
+        if has_regular_sharding_grid:
+            assert sharding.local_shape == local_shape, (
+                sharding.local_shape,
+                local_shape,
+                some_rank_shard,
+            )
+    errors = []
+    if not has_regular_sharding_grid:
+        # In case of uneven sharding we defer the validation to DCP
+        return errors
+    shard_access_cnt = _compute_shards_access(rank_sharding)
+    if not torch.all(shard_access_cnt == 1):
+def _compute_shards_access(rank_sharding):
+def _validate_objects_for_key(sharded_objects: List[ShardedObject]) -> List[CheckpointingException]:
+    """Ensure uniqueness of saved objects."""
+    unique_keys = [
+        sh_obj.unique_key for _, sh_obj in sharded_objects if is_main_replica(sh_obj.replica_id)
+    ]
+    errors = []
+    if len(unique_keys) != len(set(unique_keys)):
+def determine_global_metadata(
+    sharded_state_dict: ShardedStateDict,
+) -> Tuple[_LocalMetadata, _GlobalMetadata]:
+    """Exchanges local metadata with `all_gather_object` to determine global metadata.
+    Args:
+        sharded_state_dict (ShardedStateDict):
+def validate_sharded_objects_handling(
+    sharded_strategy: Union[SaveShardedStrategy, LoadShardedStrategy],
+    common_strategy: Union[SaveCommonStrategy, LoadCommonStrategy],
+) -> None:
+    """Checks if either of the passed strategies can handle sharded objects.
+    Args:
+        sharded_strategy (Union[SaveShardedStrategy, LoadShardedStrategy]):
+
+third_party/Megatron-LM/megatron/core/dist_checkpointing/core.py
+def check_is_distributed_checkpoint(checkpoint_dir):
+def maybe_load_config(checkpoint_dir: str) -> Optional[CheckpointingConfig]:
+    """Returns checkpoint config if `checkpoint_dir` is a distributed checkpoint and None otherwise
+    Args:
+        checkpoint_dir: checkpoint directory
+    Returns:
+        CheckpointingConfig (optional):
+def save_config(config: CheckpointingConfig, checkpoint_dir: str):
+
+third_party/Megatron-LM/megatron/core/transformer/moe/fused_a2a.py
+def get_hidden_bytes(x: torch.Tensor) -> int:
+    """Calculate the number of hidden bytes for a tensor.
+    Args:
+        x (torch.Tensor):
+def get_buffer(group: torch.distributed.ProcessGroup, hidden_bytes: int):
+def init_hybrid_ep_buffer(
+    group: torch.distributed.ProcessGroup,
+    hidden_dim: int,
+    seq_len: int,
+    num_local_experts: int,
+    num_sms_dispatch_api: int,
+    num_sms_combine_api: int,
+    fp8_dispatch: bool,
+) -> None:
+    '''
+    Initialize the HybridEP buffer, including buffer allocation and metadata
+    initialization.
+    If a runtime dispatch/combine requires a larger buffer than the one
+    initialized, the buffer will be reallocated at runtime,
+    incuring extra run-time overhead.
+    Args:
+        group (torch.distributed.ProcessGroup):
+def reset_hybrid_ep_buffer():
+
+third_party/Megatron-LM/megatron/core/transformer/moe/grouped_gemm_util.py
+def grouped_gemm_is_available():
+def assert_grouped_gemm_is_available():
+
+third_party/Megatron-LM/megatron/core/dist_checkpointing/optimizer.py
+def get_optim_param_to_id_map(optim_params_iter: Iterable[torch.nn.Parameter]) -> Dict[int, int]:
+    """Generate mapping from optimizer param to optimizer state id."""
+    param_mappings = {}
+    for i, param in enumerate(optim_params_iter):
+def get_param_id_to_sharded_param_map(
+    model_sharded_state_dict: ShardedStateDict, optim_params_iter: Iterable[torch.nn.Parameter]
+) -> Dict[int, Union[ShardedTensor, ShardedTensorFactory]]:
+    """Generate mapping from optimizer state ids to model sharded parameters.
+    Args:
+        model_sharded_state_dict: sharded state dict with all model sharded tensors
+            (can have any structure)
+        optim_params_iter: iterable which iterates over model parameters tracked by the optimizer.
+            The iteration must be in the same order as in the optimizer parameters.
+    Returns:
+        Dict[int, Union[ShardedTensor, ShardedTensorFactory]]: mapping from optimizer state ids
+            to model sharded parameters.
+    """
+    model_sharded_state_dict, _ = extract_sharded_tensors_and_factories(model_sharded_state_dict)
+    id_to_sharded_param_map = {}
+    param_to_id_map = get_optim_param_to_id_map(optim_params_iter)
+    # If using PyTorch FSDP2 the values in model_sharded_state_dict would
+    # have been converted to local tensors during initialization.
+    # See the make_(tp)_sharded_tensor_for_checkpoint functions.
+    for ten in nested_values(model_sharded_state_dict):
+def make_sharded_optimizer_tensor(
+    model_param: Union[ShardedTensor, ShardedTensorFactory], optim_param: torch.Tensor, prefix: str
+) -> Union[ShardedTensor, ShardedTensorFactory]:
+    """Build a ShardedTensor or ShardedTensorFactory for optimizer param based on model param
+    Args:
+        model_param (Union[ShardedTensor, ShardedTensorFactory]):
+def optim_state_to_sharding_state(
+    optim_state_dict: StateDict,
+    id_to_sharded_param_map: Dict[int, ShardedTensor],
+    exclude_keys: Tuple[str] = (),
 ):
 
-third_party/Megatron-LM/megatron/core/datasets/utils.py
-def compile_helpers():
-def normalize(weights: List[float]) -> List[float]:
-    """Do non-exponentiated normalization
-    Args:
-        weights (List[float]):
-def get_blend_from_list(
-    blend: Optional[List[str]],
-) -> Optional[Tuple[List[str], Optional[List[float]]]]:
-    # pylint: disable=line-too-long
-    """Get the blended_megatron_dataset_config.BlendedMegatronDatasetConfig blend
-    from the blend list
-    Args:
-        blend (Optional[List[str]]):
+third_party/Megatron-LM/megatron/core/export/trtllm/trtllm_weights_converter/utils.py
+def is_gated_activation(helper):
 
-third_party/Megatron-LM/megatron/core/datasets/blended_megatron_dataset_builder.py
-def _get_size_per_split_per_dataset(
-    normalized_weights: List[float], target_size_per_split: List[int], surplus: float = 0.0
-) -> List[List[int]]:
-    """Determine the contribution of the MegatronDataset splits to the BlendedDataset splits
-    Args:
-        normalized_weights (List[float]):
+third_party/Megatron-LM/megatron/core/export/trtllm/trtllm_weights_converter/single_device_trtllm_model_weights_converter.py
+def pad_vocab_size(vocab_size: int, tp_size: int):
+def str_dtype_to_torch(dtype: DataType):
 
-third_party/Megatron-LM/megatron/core/datasets/object_storage_utils.py
-def _remove_s3_prefix(path: str) -> str:
-    """Remove the S3 prefix from a path
-    Args:
-        path (str):
-def _is_s3_path(path: str) -> bool:
-    """Ascertain whether a path is in S3
-    Args:
-        path (str):
-def _remove_msc_prefix(path: str) -> str:
+third_party/Megatron-LM/megatron/core/models/huggingface/module.py
+def get_hf_model_type(model_path):
+def build_hf_model(config, model_path):
+
+third_party/Megatron-LM/megatron/core/distributed/fsdp/src/megatron_fsdp/uneven_dtensor.py
+def gather_and_compute_chunk_metadata(dtensor: DTensor) -> ChunkStorageMetadata:
     """
-    Remove the MSC prefix from a path
-    Args:
-        path (str):
-def _is_msc_path(path: str) -> bool:
-    """Checks whether a path is in MSC path (msc://profile/path/to/file)
-    Args:
-        path (str):
-def _s3_download_file(client: S3Client, s3_path: str, local_path: str) -> None:
-    """Download the object at the given S3 path to the given local file system path
-    Args:
-        client (S3Client):
-def _s3_object_exists(client: S3Client, path: str) -> bool:
-    """Ascertain whether the object at the given S3 path exists in S3
-    Args:
-        client (S3Client):
-def is_object_storage_path(path: str) -> bool:
-    """Ascertain whether a path is in object storage
-    Args:
-        path (str):
-def get_index_cache_path(idx_path: str, object_storage_config: ObjectStorageConfig) -> str:
-    """Get the index cache path for the given path
-    Args:
-        idx_path (str):
-def parse_s3_path(path: str) -> Tuple[str, str]:
-    """Parses the given S3 path returning correspsonding bucket and key.
-    Args:
-        path (str):
-def get_object_storage_access(path: str) -> str:
-    """Get the object storage access"""
-    return "s3" if _is_s3_path(path) else "msc"
-def dataset_exists(path_prefix: str, idx_path: str, bin_path: str) -> bool:
-    """Check if the dataset exists on object storage
-    Args:
-        path_prefix (str):
-def cache_index_file(remote_path: str, local_path: str) -> None:
-    """Download a file from object storage to a local path with distributed training support.
-    The download only happens on Rank 0, and other ranks will wait for the file to be available.
-    Note that this function does not include any barrier synchronization. The caller (typically
-    in blended_megatron_dataset_builder.py) is responsible for ensuring proper synchronization
-    between ranks using torch.distributed.barrier() after this function returns.
-    Args:
-        remote_path (str):
-
-third_party/Megatron-LM/megatron/core/ssm/mamba_hybrid_layer_allocation.py
-def _allocate_auto(
-    total_layers_count: int, target_attention_ratio: float, target_mlp_ratio: float
-) -> list:
-    # First, allocate attention (evenly spaced, starting and ending with mamba)
-    attention_layers_count: int = round(total_layers_count * target_attention_ratio)
-    mamba_layers_count: int = total_layers_count - attention_layers_count
-    mamba_sections_count: int = attention_layers_count + 1
-    mamba_section_length: float = mamba_layers_count / mamba_sections_count
-    layer_type_list = [Symbols.MAMBA] * total_layers_count
-    x: float = mamba_section_length
-    for l in range(total_layers_count):
-def _allocate_override(total_layers_count: int, override_pattern: str) -> list:
-    layer_type_list = list(override_pattern)
-    override_pattern_length = len(layer_type_list)
-    if override_pattern_length != total_layers_count:
-        raise ValueError(
-            "The hybrid override pattern is the wrong "
-            f"length: got {override_pattern_length}, expected "
-            f"{total_layers_count}"
-        )
-    for l in layer_type_list:
-        if l not in Symbols.VALID:
-            raise ValueError(f"In hybrid override pattern, '{l}' is not one of {Symbols.VALID}")
-    return layer_type_list
-def _layer_counts_match(a: list, b: list) -> bool:
-    for s in Symbols.VALID:
-        if a.count(s) != b.count(s):
-def allocate_layers(
-    total_layers_count: int,
-    target_attention_ratio: float,
-    target_mlp_ratio: float,
-    override_pattern: str = None,
-) -> list:
-    """Allocates layers according to the requested distribution of layer types."""
-    assert total_layers_count > 0
-    assert target_attention_ratio >= 0.0 and target_attention_ratio <= 1.0
-    assert target_mlp_ratio >= 0.0 and target_mlp_ratio <= 1.0
-    assert target_attention_ratio + target_mlp_ratio <= 1.0
-    # Note: target_mamba_ratio = 1.0 - target_attention_ratio - target_mlp_ratio
-    layer_type_list = _allocate_auto(total_layers_count, target_attention_ratio, target_mlp_ratio)
-    if override_pattern is not None:
-        layer_type_list_override = _allocate_override(total_layers_count, override_pattern)
-        log_single_rank(logger, logging.INFO, "Using hybrid override pattern")
-        if (target_attention_ratio > 0.0 or target_mlp_ratio > 0.0) and not _layer_counts_match(
-            layer_type_list_override, layer_type_list
-        ):
-def get_layer_maps_from_layer_type_list(
-    layer_type_list: List[str],
-) -> Tuple[Dict[int, int], Dict[int, int], Dict[int, int]]:
+    Gather chunk metadata for a DTensor across all ranks and compute the
+    offsets and sizes of each chunk. This is necessary for handling uneven
+    sharding in distributed tensors.
     """
-    Returns maps from global layer index to the corresponding layer index
-    for each layer type in [Attention, Mamba, MLP, MoE] given a layer type list.
+    local_tensor = dtensor.to_local()
+    local_shape = local_tensor.shape
+    device_mesh = dtensor.device_mesh
+    offsets = [0] * len(local_shape)
+    cumulative_shape = list(local_shape).copy()
+    def _update_offsets_and_cumulative_shape(
+        mesh_dim: int, offsets: List[int], cumulative_shape: List[int]
+    ):
+def update_uneven_dtensor_chunk_metadata(dtensor: DTensor) -> dict:
     """
-    layer_types = [Symbols.ATTENTION, Symbols.MAMBA, Symbols.MLP, Symbols.MOE]
-    layer_maps = {layer_type: {} for layer_type in layer_types}
-    for global_layer_idx, layer_type in enumerate(layer_type_list):
+    Update the DTensor's chunk metadata to handle uneven sharding.
+    This function modifies the DTensor in-place to include chunk metadata
+    and write items closures for saving and loading.
+    """
+    def _chunk_list_closure(chunk_meta):
+def validate_uneven_dtensor(dtensor: DTensor) -> None:
+    """
+    Validates the chunk metadata of an uneven DTensor to ensure correctness and boundary coverage.
+    Notes:
+    - `gather_and_compute_chunk_metadata` will ensure that all chunks do not overlap.
+    This function performs the following checks:
+      - All chunk offsets and sizes are within the tensor shape bounds.
+      - All boundaries of each dimension are actually covered by shard placements.
+    Args:
+        dtensor (DTensor):
+def filter_unflattened_state_dict(state_dict, key_chain=[], visit_condition=lambda x: False):
+def get_unflattened_state_dict(state_dict, key_chain=[]):
+def preprocess_state_dict_for_uneven_dtensor(state_dict: dict) -> dict:
+    """
+    Preprocess the state_dict to prepare it for saving or loading unevenly sharded DTensors.
+    This function modifies the DTensors in the state_dict to include chunk metadata
+    and write items closures.
+    """
+    visit_dtensor = filter_unflattened_state_dict(
+        state_dict, visit_condition=lambda x: isinstance(x, DTensor)
+    )
+    # Sort the keys, since some state dictionaries are mocked
+    # and extended to include empty global keys.
+    for key_chain in sorted(visit_dtensor):
+def gather_uneven_dtensor_to_full_tensor(
+    dtensor: DTensor, target_device: Optional[torch.device] = None
+) -> DTensor:
+    """
+    Gather an unevenly sharded DTensor distributed across multiple ranks,
+    reconstructing the full (unsharded) tensor on each rank.
+    This function handles uneven chunk sizes and offsets by collecting
+    chunk metadata from all ranks, performing all-gather operations,
+    and assembling the full tensor accordingly. The returned tensor
+    is fully replicated across the given device mesh.
+    Args:
+        dtensor (DTensor):
+def _assemble_full_tensor_from_uneven_chunks(
+    dtensor: DTensor,
+    all_chunk_info: List[dict],
+    process_group: torch.distributed.ProcessGroup,
+    target_device: Optional[torch.device],
+) -> DTensor:
+    """
+    Assemble the full tensor from unevenly sized chunks gathered from all ranks.
+    Args:
+        dtensor (DTensor):
+def _intersection(s1, s2):
+def _offset_slice(s, offset):
+def split_dtensor(
+    dtensor: DTensor,
+    split_size_or_sections: Union[int, List[int]],
+    dim: int = 0,
+    update_uneven_dtensor_chunk_meta: bool = False,
+) -> Iterable[DTensor]:
+    """
+    Splits a DTensor into smaller DTensors along a specified dimension.
+    This function manages uneven sharding by accurately assigning chunk metadata
+    for each split. Unlike the native PyTorch DTensor split functionality,
+    it does not redistribute `Replicate` placements, which helps avoid Out-Of-Memory (OOM) issues.
+    Args:
+        dtensor (DTensor):
 
-third_party/Megatron-LM/megatron/core/datasets/blended_megatron_dataset_config.py
-def parse_and_normalize_split(split: str) -> List[float]:
-    """Parse the dataset split ratios from a string
-    Args:
-        split (str):
-def convert_split_vector_to_split_matrix(
-    vector_a: List[float], vector_b: Optional[List[float]] = None
-) -> List[Optional[Tuple[float, float]]]:
-    """Build the split matrix from one or optionally two contributing split vectors.
-    Ex. a standard conversion:
-    [0.99, 0.01, 0.0] -> [(0, 0.99), (0.99, 1.0), None]
-    Ex. a conversion for Retro when Retro pretraining uses a [0.99, 0.01, 0.0] split and Retro
-    preprocessing used a [0.98, 0.02, 0.0] split:
-    [0.99, 0.01, 0.0], [0.98, 0.02, 0.0] -> [(0, 0.98), (0.99, 1.0), None]
-    Args:
-        vector_a (List[float]):
+third_party/Megatron-LM/megatron/core/export/trtllm/trtllm_weights_converter/distributed_trtllm_model_weights_converter.py
+def str_dtype_to_torch(dtype: DataType):
 
-third_party/Megatron-LM/megatron/core/datasets/retro/query/gpt_chunk_dataset.py
-def build_gpt_chunk_datasets_from_gpt_datasets(
-    project_dir: str, gpt_datasets: dict, sample_length: int, chunk_length: int
-) -> dict:
-    """Get train, valid, test GPT chunk datasets.
+third_party/Megatron-LM/megatron/core/export/trtllm/trtllm_layers.py
+def get_layer_name_without_prefix(layer: TRTLLMLayers) -> str:
+    """Get TRTLayer name without prefix
+    Given a layer e.g TRTLLMLayers.attention_qkv_weight it returns 'attention.qkv.weight'
     Args:
-        project_dir (str):
+        layer (TRTLLMLayers):
 
-third_party/Megatron-LM/megatron/core/datasets/retro/query/utils.py
-def get_query_dir(project_dir: str) -> str:
-    """Get root directory of all saved query data.
-    Args:
-        project_dir (str):
-def get_neighbor_dir(project_dir: str, key: str, dataset: MegatronDataset) -> str:
-    """Get directory containing neighbor IDs for a dataset (i.e., train, valid, or test).
-    Args:
-        project_dir (str):
-
-third_party/Megatron-LM/megatron/core/datasets/retro/utils.py
-def log_retro_rank_0(message: str) -> None:
-    """Log on rank 0.
-    Args:
-        message (str):
-def retro_makedir(config: RetroPreprocessingConfig, path: str) -> None:
-    """Make a directory, conditional on not being in validation mode.
-    Args:
-        config (RetroPreprocessingConfig):
-def extract_data_config(config: RetroPreprocessingConfig) -> MultiSplitGPTDatasetConfig:
-    """Extract data config from dataset.
-    Args:
-        config (RetroPreprocessingConfig):
-def get_num_chunks_per_sample(sample_length: int, chunk_length: int) -> int:
-    """Compute seq_length // chunk_length.
-    Args:
-        sample_length (int):
-def get_blocks(
-    dirname: str, n_samples: int, block_size: int, validate: Optional[Callable] = None
-) -> SimpleNamespace:
-    """Divide range [0, num_samples) to sequence of block ranges.
-    This is a core method within the concept of block processing. The idea
-    is to divide a range (size n_samples) into a sequence of blocks. Each
-    block corresponds to a file within 'dirname' with name
-    '{start_idx}-{end_idx}.hdf5'. This method checks for the existence of
-    these files, and returns two lists, one for existing blocks and one for
-    missing blocks.
-    Args:
-        dirname (str):
-def get_blocks_by_rank(
-    dirname: str,
-    n_samples: int,
-    block_size: int,
-    validate: Optional[Callable] = None,
-    sample: Optional[float] = None,
-    process_group: Optional[ProcessGroup] = None,
-) -> SimpleNamespace:
-    """Divide existing and missing blocks evenly across all ranks.
-    See 'get_blocks()' above for description. The returned lists of existing and
-    missing blocks are split evenly across ranks via interleaving. This way,
-    each rank has a roughly equal number of blocks to process for a
-    downstream operation.
-    Args:
-        dirname (str):
+third_party/Megatron-LM/megatron/core/distributed/reduce_scatter_with_fp32_accumulation.py
+def reduce_scatter_with_fp32_accumulation(
+    output_tensor: torch.Tensor,
+    input_tensor: torch.Tensor,
+    op: torch.distributed.ReduceOp,
+    group: torch.distributed.ProcessGroup,
+    async_op: bool,
+):
 
 third_party/Megatron-LM/megatron/core/ssm/mamba_context_parallel.py
 def _all_to_all_cp2hp(
@@ -5191,354 +5307,6 @@ def _redo_attention_load_balancing(
         seqlen_per_rank = total_tokens // cp_size
         index = torch.empty(total_tokens, device=input_.device, dtype=torch.int32)
         for cp_rank in range(cp_size):
-
-third_party/Megatron-LM/megatron/core/datasets/gpt_dataset.py
-def _build_document_index(
-    documents: numpy.ndarray,
-    num_epochs: int,
-    numpy_random_state: numpy.random.RandomState,
-    separate_final_epoch: bool,
-) -> numpy.ndarray:
-    """Build an array with length = num epochs * num documents
-    Args:
-        documents (numpy.ndarray):
-def _build_shuffle_index(
-    num_samples: int, total_size: int, numpy_random_state: numpy.random.RandomState
-) -> numpy.ndarray:
-    """Build the range [0, size) and shuffle
-    Args:
-        num_samples (int):
-def _get_ltor_masks_and_position_ids(
-    data: torch.Tensor,
-    eod_token: int,
-    reset_position_ids: bool,
-    reset_attention_mask: bool,
-    eod_mask_loss: bool,
-    create_attention_mask: bool,
-):
-
-third_party/Megatron-LM/megatron/core/datasets/indexed_dataset.py
-def get_idx_path(path_prefix: str) -> str:
-    """Get the path to the index file from the prefix
-    Args:
-        path_prefix (str):
-def get_bin_path(path_prefix: str) -> str:
-    """Get the path to the data file from the prefix
-    Args:
-        path_prefix (str):
-
-third_party/Megatron-LM/megatron/core/datasets/retro/query/retro_dataset.py
-def get_retro_datasets(
-    config: RetroConfig, gpt_datasets: dict, sample_length: int, eod_token_id: int
-) -> Tuple[Optional[RetroDataset], Optional[RetroDataset], Optional[RetroDataset]]:
-    """Get train, valid, test retro datasets.
-    Args:
-        config (RetroConfig):
-
-third_party/Megatron-LM/megatron/core/ssm/mamba_mixer.py
-def _split_tensor_factory(
-    orig_sh_ten: ShardedTensor, split_sections: List[int], split_names: List[str], split_dim: int
-) -> ShardedTensorFactory:
-    """Builds a factory that splits a given ShardedTensor into several independent chunks."""
-    assert isinstance(orig_sh_ten, ShardedTensor), type(orig_sh_ten)
-    orig_sh_ten_no_data = orig_sh_ten.without_data()  # remove `data` reference
-    if sum(split_sections) != orig_sh_ten_no_data.local_shape[split_dim]:
-        raise ValueError(
-            f"Split sections must cover the whole dimension size, "
-            f"got {split_sections=} vs dimensions size "
-            f"{orig_sh_ten_no_data.local_shape[split_dim]}"
-        )
-    assert not isinstance(
-        split_sections, int
-    ), "Splitting into predefined section sizes is supported (`split_sections` must be a list)"
-    assert len(split_sections) == len(split_names), (len(split_sections), len(split_names))
-    @torch.no_grad()
-    def sh_ten_build_fn(
-        key: str, t: torch.Tensor, replica_id: ReplicaId, flattened_range: Optional[slice]
-    ):
-def _check_mamba_sequence_packing_support(
-    for_inference_not_training: bool = True,
-) -> Tuple[bool, Optional[str]]:
-    """Checks whether `causal_conv1d` and `mamba_ssm` support sequence packing."""
-    if for_inference_not_training:
-        # https://github.com/Dao-AILab/causal-conv1d/commit/d87608f78f87d1288a7821d9e6ff4b10a8d5bf07
-        conv1d_min = "1.5.3.post1"
-        # https://github.com/state-spaces/mamba/commit/4f77d5306e19f5c7ae37665a44c3e61e24cafcb5
-        mamba_min = "2.2.6.post3"
-    else:
-        conv1d_min = "1.4.0"
-        mamba_min = "2.0.0"
-    if not is_causal_conv1d_min_version(conv1d_min):
-
-third_party/Megatron-LM/megatron/core/datasets/retro/index/validate.py
-def validate_training_embeddings(config: RetroPreprocessingConfig) -> None:
-    """Validate training embeddings.
-    Steps:
-    - Randomly sample subset of text dataset blocks.
-    - Embed each block.
-    - Compare against saved embeddings.
-    Args:
-        config (RetroPreprocessingConfig):
-def validate_added_encodings(config: RetroPreprocessingConfig) -> None:
-    """Validate added encodings.
-    Steps:
-    - Randomly sample subset of text dataset blocks.
-    - Encode each block.
-    - Compare against saved encodings.
-    Args:
-        config (RetroPreprocessingConfig):
-def validate_index(config: RetroPreprocessingConfig) -> None:
-    """Validate index.
-    Validating index involves sequentially running stages above:
-    - Validate trained index.
-    - Validate filled index.
-    Args:
-        config (RetroPreprocessingConfig):
-
-third_party/Megatron-LM/megatron/core/datasets/retro/query/query.py
-def get_index(config: RetroPreprocessingConfig, ondisk: bool = False) -> "faiss.Index":
-    """Read index from disk.
-    Args:
-        config (RetroPreprocessingConfig):
-def embed_block(
-    config: RetroPreprocessingConfig, gpt_dataset: GPTChunkDataset, block: dict
-) -> np.ndarray:
-    """Embed block of chunks.
-    Args:
-        config (RetroPreprocessingConfig):
-def query_embeddings(
-    config: RetroPreprocessingConfig,
-    db_dataset: DBDataset,
-    index: Index,
-    embeddings: np.ndarray,
-    chunk_id_range: range,
-    sample_map: dict,
-    n_chunks_per_sample: int,
-    verbose: bool = True,
-) -> typing.Tuple[np.ndarray, np.ndarray]:
-    """Query neighbors of a block of embeddings.
-    Querying includes:
-      - Query index for neighbor chunk IDs.
-      - Filter chunk IDs that have the same document ID as the queried embedding.
-    Args:
-        config (RetroPreprocessingConfig):
-def query_embedding_block(
-    config: RetroPreprocessingConfig,
-    db_dataset: DBDataset,
-    index: Index,
-    embeddings: np.ndarray,
-    chunk_id_range: range,
-    sample_map: dict,
-    n_chunks_per_sample: int,
-) -> typing.Tuple[np.ndarray, np.ndarray]:
-    """Query a block of embeddings.
-    The block is broken into smaller sub-blocks, for easier tracking of progress.
-    Both the raw neighbor IDs and the filtered neighbor IDs (i.e., chunks with the
-    same document ID are removed) are collected.
-    Args:
-        config (RetroPreprocessingConfig):
-def query_block_neighbors(
-    config: RetroPreprocessingConfig,
-    db_dataset: DBDataset,
-    query_dataset: GPTChunkDataset,
-    index: Index,
-    block: dict,
-) -> None:
-    """Query neighbors of a dataset block (i.e., range).
-    Args:
-        config (RetroPreprocessingConfig):
-def query_dataset_neighbors(
-    config: RetroPreprocessingConfig,
-    db_dataset: DBDataset,
-    query_dataset: GPTChunkDataset,
-    num_active_chunks: int,
-    prefix: str,
-    neighbor_dir: str,
-    index: Index,
-) -> None:
-    """Query neighbors of each chunk within a dataset.
-    Args:
-        config (RetroPreprocessingConfig):
-def query_neighbors(config: RetroPreprocessingConfig) -> None:
-    """Query pretraining datasets (train & valid).
-    Args:
-        config (RetroPreprocessingConfig):
-
-third_party/Megatron-LM/megatron/core/parallel_state.py
-def get_nccl_options(pg_name, nccl_comm_cfgs):
-def update_pg_timeout(
-    timeout: timedelta, pg: Optional[torch._C._distributed_c10d.ProcessGroup] = None
-):
-def create_group(
-    ranks=None,
-    timeout=None,
-    backend=None,
-    pg_options=None,
-    use_local_synchronization=False,
-    group_desc=None,
-):
-def generate_masked_orthogonal_rank_groups(
-    world_size: int, parallel_size: List[int], mask: List[bool]
-) -> List[List[int]]:
-    r"""Generate orthogonal parallel groups based on the parallel size and mask.
-    Arguments:
-        world_size (int):
-def create_hierarchical_groups(
-    rank,
-    ranks,
-    hierarchical_group_sizes,
-    create_gloo_process_groups=False,
-    pg_options=None,
-    timeout=None,
-    group_desc=None,
-):
-def create_hybrid_dp_cp_groups(rank, ranks, pg_options):
-def default_embedding_ranks(pp_ranks):
-def default_position_embedding_ranks(pp_ranks):
-def overwrite_nccl_comm_cfgs(nccl_comm_cfgs, pg_name, key_value_pair):
-def initialize_model_parallel(
-    tensor_model_parallel_size: int = 1,
-    pipeline_model_parallel_size: int = 1,
-    virtual_pipeline_model_parallel_size: Optional[int] = None,
-    pipeline_model_parallel_comm_backend: Optional[str] = None,
-    use_sharp: bool = False,
-    context_parallel_size: int = 1,
-    hierarchical_context_parallel_sizes: Optional[List[int]] = None,
-    hybrid_context_parallel: bool = False,
-    expert_model_parallel_size: int = 1,
-    num_distributed_optimizer_instances: int = 1,
-    expert_tensor_parallel_size: Optional[int] = None,
-    nccl_communicator_config_path: Optional[str] = None,
-    distributed_timeout_minutes: int = 30,
-    order: str = "tp-cp-ep-dp-pp",
-    get_embedding_ranks: Optional[Callable[[List[int], Optional[int]], List[int]]] = None,
-    get_position_embedding_ranks: Optional[Callable[[List[int], Optional[int]], List[int]]] = None,
-    create_gloo_process_groups: bool = True,
-    high_priority_stream_groups: Optional[List[str]] = None,
-    sharp_enabled_group: Optional[str] = None,
-) -> None:
-    """Initialize model data parallel groups.
-    Args:
-        tensor_model_parallel_size (int, default = 1):
-def is_initialized():
-def is_unitialized() -> bool:
-    """Check if parallel state has been initialized
-    Deprecated. Use is_initialized instead.
-    """
-    warnings.warn("is_unitialized is deprecated, use is_initialized instead", DeprecationWarning)
-    return not is_initialized()
-def model_parallel_is_initialized():
-def get_model_parallel_group(check_initialized=True):
-def get_tensor_model_parallel_group(check_initialized=True):
-def get_pipeline_model_parallel_group(check_initialized=True):
-def get_data_parallel_group(with_context_parallel=False, partial_data_parallel=False):
-def get_data_parallel_group_gloo(with_context_parallel=False, partial_data_parallel=False):
-def get_context_parallel_group(check_initialized=True):
-def get_context_parallel_global_ranks(check_initialized=True):
-def get_hierarchical_context_parallel_groups(check_initialized=True):
-def get_hybrid_data_context_parallel_groups(check_initialized=True, group_size=None):
-def get_embedding_group(check_initialized=True):
-def get_position_embedding_group(check_initialized=True):
-def get_amax_reduction_group(with_context_parallel=False, tp_only_amax_red=False):
-def get_tensor_and_data_parallel_group(check_initialized=True, with_context_parallel=False):
-def get_tensor_and_context_parallel_group(check_initialized=True):
-def set_tensor_model_parallel_world_size(world_size):
-def set_pipeline_model_parallel_world_size(world_size):
-def set_virtual_pipeline_model_parallel_world_size(world_size):
-def get_tensor_model_parallel_world_size():
-def get_pipeline_model_parallel_world_size():
-def set_tensor_model_parallel_rank(rank):
-def set_pipeline_model_parallel_rank(rank):
-def get_tensor_model_parallel_rank():
-def get_pipeline_model_parallel_rank():
-def is_pipeline_first_stage(ignore_virtual=True, vp_stage=None):
-def is_pipeline_last_stage(ignore_virtual=True, vp_stage=None):
-def is_rank_in_embedding_group(ignore_virtual=True, vp_stage=None):
-def is_rank_in_position_embedding_group():
-def get_virtual_pipeline_model_parallel_rank():
-def set_virtual_pipeline_model_parallel_rank(rank):
-def get_virtual_pipeline_model_parallel_world_size():
-def get_tensor_model_parallel_src_rank():
-def get_model_parallel_src_rank():
-def get_data_parallel_src_rank(with_context_parallel=False):
-def get_pipeline_model_parallel_first_rank():
-def get_pipeline_model_parallel_last_rank():
-def get_pipeline_model_parallel_next_rank():
-def get_pipeline_model_parallel_prev_rank():
-def get_data_parallel_world_size(with_context_parallel=False, partial_data_parallel=False):
-def set_data_parallel_rank(rank):
-def get_data_parallel_rank(with_context_parallel=False, partial_data_parallel=False):
-def get_context_parallel_world_size():
-def get_context_parallel_rank():
-def get_tensor_and_context_parallel_world_size():
-def get_tensor_and_context_parallel_rank():
-def get_expert_model_parallel_group(check_initialized=True):
-def get_expert_model_parallel_src_rank():
-def get_expert_model_parallel_world_size():
-def set_expert_model_parallel_world_size(world_size):
-def get_expert_model_parallel_rank():
-def set_expert_model_parallel_rank(rank):
-def get_expert_tensor_parallel_group(check_initialized=True):
-def get_expert_tensor_parallel_world_size():
-def set_expert_tensor_parallel_world_size(world_size):
-def get_expert_tensor_parallel_rank():
-def set_expert_tensor_parallel_rank(rank):
-def get_expert_tensor_and_model_parallel_group(check_initialized=True):
-def get_expert_tensor_and_model_parallel_world_size():
-def get_expert_tensor_and_model_parallel_rank():
-def get_expert_tensor_model_pipeline_parallel_group(check_initialized=True):
-def get_expert_data_parallel_group(check_initialized=True, partial_expert_data_parallel=False):
-def get_data_modulo_expert_parallel_group(partial_expert_data_parallel=False):
-def get_expert_data_parallel_group_gloo(partial_expert_data_parallel=False):
-def get_expert_data_parallel_rank(partial_expert_data_parallel=False):
-def get_expert_data_parallel_world_size(partial_expert_data_parallel=False):
-def get_intra_distributed_optimizer_instance_group(check_initialized=True):
-def get_inter_distributed_optimizer_instance_group(check_initialized=True):
-def _set_global_memory_buffer():
-def _set_global_symmetric_memory_buffer():
-def get_global_memory_buffer():
-def get_global_symmetric_memory_buffer():
-def destroy_global_memory_buffer():
-def destroy_global_symmetric_memory_buffer():
-def get_all_ranks():
-def destroy_model_parallel():
-
-third_party/Megatron-LM/megatron/core/datasets/retro/index/utils.py
-def get_index_dir(config: RetroPreprocessingConfig) -> str:
-    """Create sub-directory for this index.
-    Args:
-        config (RetroPreprocessingConfig):
-def num_samples_to_block_ranges(
-    config: RetroPreprocessingConfig, num_samples: int
-) -> List[Tuple[int, int]]:
-    """Split a range (length num_samples) into sequence of block ranges
-    of size block_size.
-    Args:
-        config (RetroPreprocessingConfig):
-def get_training_data_root_dir(config: RetroPreprocessingConfig) -> str:
-    """Get root directory for embeddings (blocks and merged data).
-    Args:
-        config (RetroPreprocessingConfig):
-def get_training_data_block_dir(config: RetroPreprocessingConfig) -> str:
-    """Get directory for of saved embedding blocks.
-    Args:
-        config (RetroPreprocessingConfig):
-def get_training_data_block_paths(config: RetroPreprocessingConfig) -> List[str]:
-    """Get paths to saved embedding blocks.
-    Args:
-        config (RetroPreprocessingConfig):
-def get_training_data_merged_path(config: RetroPreprocessingConfig) -> str:
-    """Get path to merged training embeddings.
-    Args:
-        config (RetroPreprocessingConfig):
-def get_added_codes_dir(config: RetroPreprocessingConfig) -> str:
-    """Get directory of saved encodings.
-    Args:
-        config (RetroPreprocessingConfig):
-def get_added_code_paths(config: RetroPreprocessingConfig) -> List[str]:
-    """Get paths to all saved encodings.
-    Args:
-        config (RetroPreprocessingConfig):
 
 third_party/Megatron-LM/megatron/core/resharding/planner.py
 def _build_descriptors_for_param(
@@ -5650,20 +5418,33 @@ def _finalize_dp_transfers(
     destination and source mode have no TP or the parameter is replicted on all ranks
     such as layernorm. If the source and destination DP groups match, we return a local
     full-tensor copy; otherwise we pick a source rank from the source DP group in a
-    deterministic round-robin manner based on the receiver's index in its destination DP group.
+    deterministic round-robin manner based on the receiver's global rank for better load
+    distribution.
     """
     dst_dp_ranks = dst_metadata.data_parallel_group_ranks
     src_dp_ranks = src_metadata.data_parallel_group_ranks
     if my_global_rank not in dst_dp_ranks:
         return []
-    my_dst_dp_rank = _get_rank_in_group(my_global_rank, dst_dp_ranks)
     dst_shape = dst_metadata.shape
-    # Same DP layout - local copy
-    if src_dp_ranks == dst_dp_ranks:
+    # Same DP layout - local copy (only if this rank has the source parameter)
+    if src_dp_ranks == dst_dp_ranks and my_global_rank in src_dp_ranks:
         full_slice = tuple(slice(None) for _ in range(len(dst_shape)))
         return [(my_global_rank, full_slice, full_slice)]
-    # Different DP groups - use round-robin for load balancing
-    src_global_rank = src_dp_ranks[my_dst_dp_rank % len(src_dp_ranks)]
+    # Different DP groups - use round-robin based on destination global rank for
+    # better load balancing across source ranks. This ensures that destination
+    # ranks are distributed across source ranks even when they have the same
+    # position within their respective DP groups.
+    #
+    # In non-collocated mode, src_dp_ranks might include ranks that don't
+    # have the source model (e.g., idle ranks or destination ranks). Filter to only
+    # include the rank that provided this metadata (src_metadata.owner_rank).
+    # src_metadata was selected by select_src_metadata_balanced, so owner_rank is the
+    # actual source rank for this parameter.
+    actual_src_rank = src_metadata.owner_rank
+    src_global_rank = src_dp_ranks[my_global_rank % len(src_dp_ranks)]
+    # Override with the actual source rank if the selected rank doesn't have the parameter
+    if src_global_rank != actual_src_rank:
+        src_global_rank = actual_src_rank
     full_slice = tuple(slice(None) for _ in range(len(dst_shape)))
     return [(src_global_rank, full_slice, full_slice)]
 def _determine_source_ranks_for_dst_param(
@@ -5690,42 +5471,59 @@ def build_centralized_reshard_plan(
 ) -> ReshardPlan:
     """
     Centralized planning: Rank 0 builds complete plan for all ranks, then scatters.
+    Supports None for src_module and/or dst_module to enable non-collocated mode:
+    - src_module=None: Rank doesn't have source model (destination-only)
+    - dst_module=None: Rank doesn't have destination model (source-only)
+    - Both provided: Rank has both models (collocated mode)
+    Each rank provides metadata only for the models it owns, including parallel group
+    membership (tensor_parallel_group_ranks, expert_parallel_group_ranks, etc.).
+    This metadata is sufficient for rank 0 to build correct transfer plans without
+    requiring dummy models.
     """
     my_global_rank = dist.get_rank()
     world_size = dist.get_world_size()
-    # Get process groups
-    src_pg = getattr(src_module, "pg_collection", None)
-    dst_pg = getattr(dst_module, "pg_collection", None)
-    if src_pg is None or dst_pg is None:
-        raise ValueError("Both modules must have pg_collection")
-    # Gather param metadata from all ranks
-    my_src_params = {name: p for name, p in src_module.named_parameters(recurse=True)}
-    my_dst_params = {name: p for name, p in dst_module.named_parameters(recurse=True)}
-    # Build PP layer prefix maps to be used for parameter name rewriting
-    src_layer_prefix_map = _build_layer_module_prefix_map(src_module)
-    dst_layer_prefix_map = _build_layer_module_prefix_map(dst_module)
-    my_src_metadata = [
-        extract_param_metadata(
-            p,
-            name,
-            my_global_rank,
-            src_pg,
-            num_experts=num_experts,
-            layer_module_prefix_map=src_layer_prefix_map,
-        )
-        for name, p in my_src_params.items()
-    ]
-    my_dst_metadata = [
-        extract_param_metadata(
-            p,
-            name,
-            my_global_rank,
-            dst_pg,
-            num_experts=num_experts,
-            layer_module_prefix_map=dst_layer_prefix_map,
-        )
-        for name, p in my_dst_params.items()
-    ]
+    # Extract metadata from source model if present
+    if src_module is not None:
+        src_pg = getattr(src_module, "pg_collection", None)
+        if src_pg is None:
+            raise ValueError("Source module must have pg_collection")
+        my_src_params = {name: p for name, p in src_module.named_parameters(recurse=True)}
+        src_layer_prefix_map = _build_layer_module_prefix_map(src_module)
+        my_src_metadata = [
+            extract_param_metadata(
+                p,
+                name,
+                my_global_rank,
+                src_pg,
+                num_experts=num_experts,
+                layer_module_prefix_map=src_layer_prefix_map,
+            )
+            for name, p in my_src_params.items()
+        ]
+    else:
+        # No source model on this rank - provide empty metadata
+        my_src_metadata = []
+    # Extract metadata from destination model if present
+    if dst_module is not None:
+        dst_pg = getattr(dst_module, "pg_collection", None)
+        if dst_pg is None:
+            raise ValueError("Destination module must have pg_collection")
+        my_dst_params = {name: p for name, p in dst_module.named_parameters(recurse=True)}
+        dst_layer_prefix_map = _build_layer_module_prefix_map(dst_module)
+        my_dst_metadata = [
+            extract_param_metadata(
+                p,
+                name,
+                my_global_rank,
+                dst_pg,
+                num_experts=num_experts,
+                layer_module_prefix_map=dst_layer_prefix_map,
+            )
+            for name, p in my_dst_params.items()
+        ]
+    else:
+        # No destination model on this rank - provide empty metadata
+        my_dst_metadata = []
     all_src_metadata_by_rank = [None] * world_size
     all_dst_metadata_by_rank = [None] * world_size
     dist.all_gather_object(all_src_metadata_by_rank, my_src_metadata)
@@ -5736,236 +5534,656 @@ def build_centralized_reshard_plan(
     src_param_metadata: dict[str, list[ParameterMetadata]] = {}
     for rank_id, rank_metadata_list in enumerate(all_src_metadata_by_rank):
 
-third_party/Megatron-LM/megatron/core/datasets/retro/index/build.py
-def get_empty_index_path(config: RetroPreprocessingConfig) -> str:
-    """Path of empty index.
-    Args:
-        config (RetroPreprocessingConfig):
-def get_block_nload(block_path: str, load_fraction: float) -> int:
-    """Compute number of blocks to load.
-    This is computed by multiplying the total number of available blocks with the
-    fraction of blocks to load.
-    Args:
-        block_path (str):
-def merge_embedding_blocks(config: RetroPreprocessingConfig) -> None:
-    """Merge individual embedding blocks into a single binary mmap file.
-    The embeddings are initially stored in block-sized (e.g., ~100k embeddings per
-    block) HDF5 files. These individual block files must be merged into a single
-    file before training, to be based as a numpy mmap array to the index.
-    Args:
-        config (RetroPreprocessingConfig):
-def get_text_dataset_for_training(config: RetroPreprocessingConfig) -> GPTToTextDataset:
-    """Convert GPT token chunk dataset to a text dataset for passing to the
-    embedder.
-    Args:
-        config (RetroPreprocessingConfig):
-def embed_training_chunks(config: RetroPreprocessingConfig) -> None:
-    """Embed DB chunks.
-    Store chunks in blocks on disk. These blocks will later be merged into
-    a single dataset for training the index.
-    Args:
-        config (RetroPreprocessingConfig):
-def train_on_embeddings(config: RetroPreprocessingConfig) -> None:
-    """Train index on embedded DB chunks.
-    Args:
-        config (RetroPreprocessingConfig):
-def remove_embeddings(config: RetroPreprocessingConfig) -> None:
-    """Remove embeddings after training.
-    Args:
-        config (RetroPreprocessingConfig):
-def _train_index(config: RetroPreprocessingConfig) -> None:
-    """Train index on DB chunks.
-    Args:
-        config (RetroPreprocessingConfig):
-def train_index(config: RetroPreprocessingConfig) -> None:
-    """Entry point for training the index.
-    We select whether to train a new index, or validate an existing index.
-    Args:
-        config (RetroPreprocessingConfig):
-def get_text_dataset_for_adding(config: RetroPreprocessingConfig) -> GPTToTextDataset:
-    """Convert GPT token chunk dataset to a text dataset for passing to the
-    embedder.
-    Args:
-        config (RetroPreprocessingConfig):
-def _add_to_index(config: RetroPreprocessingConfig) -> str:
-    """Add DB chunks to index.
-    Args:
-        config (RetroPreprocessingConfig):
-def add_to_index(config: RetroPreprocessingConfig) -> None:
-    """Entry point for adding to the index.
-    We select whether to add to a new index, or validate an existing index.
-    Args:
-        config (RetroPreprocessingConfig):
-def build_index(config: RetroPreprocessingConfig) -> None:
-    """Build index.
-    Building index involves sequentially running stages above:
-    - Train index (on sampled training chunks).
-    - Add to index (on all training chunks).
-    Args:
-        config (RetroPreprocessingConfig):
+third_party/Megatron-LM/megatron/core/distributed/fsdp/mcore_fsdp_adapter.py
+def _get_hsdp_tp_mesh(outer_fsdp_dp_group, dp_cp_group, tp_group, ep_size=1):
+def _get_dp_tp_mesh(dp_cp_group, tp_group, ep_size=1):
+def _check_mesh_ranks_and_group_ranks_are_consistent(mesh_ranks, group_ranks):
+def _get_rng_state_dict():
+def _load_rng_state_dict(rng_state_dict):
 
-third_party/Megatron-LM/megatron/core/datasets/retro/db/utils.py
-def get_db_dir(project_dir: str) -> str:
-    """Sub-directory for DB data.
+third_party/Megatron-LM/megatron/core/dist_checkpointing/exchange_utils.py
+def is_float8tensor(tensor: torch.Tensor) -> bool:
+    """Check if a tensor is a Transformer Engine Float8Tensor"""
+    return HAVE_TE_FLOAT8TENSOR and isinstance(tensor, Float8Tensor)
+logger = logging.getLogger(__name__)
+class ShardDistribution(NamedTuple):
+def _shard_size(sh_ten: ShardedTensor):
+def _get_empty_tensor_for_exchange(
+    shard_id: _ShardId,
+    needed_shards: Dict[_ShardId, ShardedTensor],
+    unneeded_shards: Dict[_ShardId, ShardedTensor],
+    loaded_tensors: Dict[_ShardId, torch.Tensor],
+) -> Tuple[torch.Tensor, Optional[torch.device]]:
+    """Determines the empty tensor to use for exchange.
+    If shard_id is needed by this rank, it will be in the `unloaded_shards`.
+    Otherwise, the metadata for this tensor can be found in `shard_to_metadata`
     Args:
-        project_dir (str):
-def init_indexed_dataset_infos(config: RetroPreprocessingConfig) -> List[Dict]:
-    """Gather meta-info about each indexed dataset.
-    The returned info array allows for easy access to the configuration, and
-    helps remove ambiguity.
+        shard_id (_ShardId):
+def distribute_shards_to_ranks(
+    shard_to_ranks: Dict[T, List[int]],
+    shard_to_size: Dict[T, int],
+    num_ranks: int,
+    cross_parallelization_group_loads: Set[T],
+) -> Dict[T, int]:
+    """Computes uniform distribution of workload across ranks, based on sizes.
+    Currently, the assignment is greedy, based on:
+    1. Cross-parallelization group dependencies (shards with main rank in another group
+       are assigned at the end to make sure the distribution for load and save
+       is as similar as possible).
+    2. Secondly, the coverage of each shard
+        (how many ranks the shard is available on; lower coverage is assigned first)
+    3. Then, the size of each shard (larger size is assigned first)
+    4. Finally, shard id for differentiation.
+    Last step is added because we rely on the fact that
+    the assignment is deterministic on all ranks.
     Args:
-        config (RetroPreprocessingConfig):
-def get_indexed_dataset_infos_path(project_dir: str) -> str:
-    """Path to indexed dataset meta-infos.
+        shard_to_ranks (Dict[T, List[int]]):
+def determine_main_replica_uniform_distribution(
+    sharded_state_dict: ShardedStateDict,
+    parallelization_group: torch.distributed.ProcessGroup,
+    ignore_groups: bool = False,
+) -> Optional[ShardDistribution]:
+    """Computes the save distribution.
+    Should be used in conjunction with `distribute_main_replicas_with_precomputed_distribution`
+    which applies the computed save distribution.
+    We rely on the fact that the assignment algorithm is deterministic on all ranks,
+    so there is no extra communication needed after metadata exchange.
     Args:
-        project_dir (str):
-def save_indexed_dataset_infos(project_dir: str, indexed_dataset_infos: List[Dict]) -> None:
-    """Save dataset order & meta-info.
+        sharded_state_dict (ShardedStateDict):
+def exchange_loaded_tensors_gather_rounds(
+    loaded_tensors: Dict[_ShardId, torch.Tensor],
+    unloaded_shards: Dict[_ShardId, ShardedTensor],
+    shard_distribution: ShardDistribution = None,
+    parallelization_group: Optional[torch.distributed.ProcessGroup] = None,
+) -> Dict[_ShardId, torch.Tensor]:
+    """Exchange the tensors loaded by different ranks with several all_gather calls.
+    Groups tensors by dtype, divide tensors that will be exchanged into rounds
+    and execute all_gather for tensors from each round.
+    Note: the loading is distributed across ranks based on total loaded size
+    in bytes, so there is no guarantee that number of rounds needed for each
+    rank will be similar, which might result in a lot of almost empty
+    all_gathers. The solution would be to group all tensors into a one
+    bytes tensor and do a single all_gather (with similarly sized messages).
     Args:
-        project_dir (str):
-def load_indexed_datasets(project_dir: str, indexed_dataset_infos: List[Dict]) -> None:
-    """Loaded indexed datasets into memory-mapped datasets.
+        loaded_tensors (Dict[_ShardId, torch.Tensor]):
+def exchange_loaded_tensors_gather_object(
+    loaded_tensors: Dict[_ShardId, torch.Tensor],
+    unloaded_shards: Dict[_ShardId, ShardedTensor],
+    shard_distribution: ShardDistribution,
+    parallelization_group: Optional[torch.distributed.ProcessGroup] = None,
+) -> Dict[_ShardId, torch.Tensor]:
+    """Exchange the tensors loaded by different ranks with a simple all_gather_object call.
+    This version can be used for debugging purposes do to its simplistic
+    implementation. Shouldn't be used if performance is important.
     Args:
-        project_dir (str):
-def get_indexed_dataset_infos(project_dir: str) -> List[Dict]:
-    """Load indexed dataset meta-infos.
+        loaded_tensors (Dict[_ShardId, torch.Tensor]):
+def exchange_loaded_objects_gather_object(
+    loaded_objects: Dict[_ShardId, Any]
+) -> Dict[_ShardId, Any]:
+    """Exchange the objects loaded by different ranks with a simple all_gather_object call.
     Args:
-        project_dir (str):
-def get_individual_db_dir(project_dir: str, prefix: str) -> str:
-    """Individual DB's directory.
+        loaded_objects (Dict[_ShardId, Any]):
+def exchange_loaded_tensors_broadcast(
+    loaded_tensors: Dict[_ShardId, torch.Tensor],
+    unloaded_shards: Dict[_ShardId, ShardedTensor],
+    shard_distribution: ShardDistribution,
+    parallelization_group: Optional[torch.distributed.ProcessGroup] = None,
+) -> Dict[_ShardId, torch.Tensor]:
+    """Exchange the tensors loaded by different ranks by a series of broadcasts.
+    For each rank for each loaded tensor do a broadcast to the whole group.
+    A reasonable tradeoff in terms of performance and simplicity.
     Args:
-        project_dir (str):
-def get_individual_db_paths(project_dir: str, prefix: str) -> List[str]:
-    """Get paths of all database blocks of an individual dataset.
+        loaded_tensors (Dict[_ShardId, torch.Tensor]):
+def exchange_by_distribution(
+    loaded_tensors: Dict[_ShardId, torch.Tensor],
+    unloaded_shards: Dict[_ShardId, ShardedTensor],
+    shard_distribution: ShardDistribution,
+    parallelization_group: Optional[torch.distributed.ProcessGroup] = None,
+    exchange_algo="broadcast",
+) -> Dict[_ShardId, torch.Tensor]:
+    """Exchange tensors loaded by different ranks using the specified exchange_algo.
     Args:
-        project_dir (str):
-def get_individual_chunk_db(project_dir: str, ds_id: int, ds_info: dict) -> np.ndarray:
-    """Load individual dataset's chunk DB.
-    Args:
-        project_dir (str):
-def get_individual_doc_offsets(project_dir: str, ds_id: int, ds_info: dict) -> np.ndarray:
-    """Load individual dataset's document offsets.
-    Args:
-        project_dir (str):
-def get_merged_db_path_map(project_dir: str) -> dict:
-    """Paths to merged datasets.
-    Args:
-        project_dir (str):
-def get_merged_dataset(
-    project_dir: str,
-    chunk_length: int,
-    eod_token_id: int,
-    db_type: str,
-    indexed_dataset_infos: Optional[List[Dict]] = None,
-) -> DBDataset:
-    """Get merged dataset.
-    Args:
-        project_dir (str):
-def get_merged_sampled_dataset(
-    project_dir: str,
-    chunk_length: int,
-    eod_token_id: int,
-    indexed_dataset_infos: Optional[List[Dict]] = None,
-) -> DBDataset:
-    """Get sampled dataset (for training the vector index).
-    Args:
-        project_dir (str):
-def get_merged_train_dataset(
-    project_dir: str,
-    chunk_length: int,
-    eod_token_id: int,
-    indexed_dataset_infos: Optional[List[Dict]] = None,
-) -> DBDataset:
-    """Get training dataset (for adding to the vector index).
-    Args:
-        project_dir (str):
-def get_merged_valid_dataset(
-    project_dir: str,
-    chunk_length: int,
-    eod_token_id: int,
-    indexed_dataset_infos: Optional[List[Dict]] = None,
-) -> DBDataset:
-    """Get validation dataset (for testing the vector index).
-    Args:
-        project_dir (str):
-def get_merged_datasets(project_dir: str, chunk_length: int, eod_token_id: int) -> dict:
-    """Get all merged datasets.
-    Args:
-        project_dir (str):
+        loaded_tensors (Dict[_ShardId, torch.Tensor]):
 
-third_party/Megatron-LM/megatron/core/datasets/retro/db/build.py
-def build_partial_db(
-    config: types.SimpleNamespace,
-    dataset_idx: int,
-    n_datasets: int,
-    indexed_dataset: IndexedDataset,
-    block_id: int,
-    n_blocks: int,
-    block: dict,
-    proc_id: int,
-    n_procs: int,
-) -> Tuple[int, list, list, dict]:
-    """Process a document index range of the indexed dataset.
-    The chunk database is built in parallel blocks, since de-tokenizing &
-    re-tokenizing for Bert-length computation is expensive. This method
-    iterates each document and extracts sequential 'chunk-length' sequences
-    from each document.
-    Args:
-        config (types.SimpleNamespace):
-def build_block_db(
-    config: RetroPreprocessingConfig,
-    dataset_idx: int,
-    n_datasets: int,
-    indexed_dataset: IndexedDataset,
-    n_procs: int,
-    executor: ProcessPoolExecutor,
-    n_missing_blocks: int,
-    block_idx: int,
-    block: dict,
-) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
-    """Split each document within block into consecutive retro_gpt_chunk_length size chunks.
-    Args:
-        config (RetroPreprocessingConfig):
-def save_block_db(
-    block: dict, chunk_db_valid: np.ndarray, chunk_db_invalid: np.ndarray, doc_offsets: np.ndarray
+third_party/Megatron-LM/megatron/core/ssm/mamba_mixer.py
+def _split_tensor_factory(
+    orig_sh_ten: ShardedTensor, split_sections: List[int], split_names: List[str], split_dim: int
+) -> ShardedTensorFactory:
+    """Builds a factory that splits a given ShardedTensor into several independent chunks."""
+    assert isinstance(orig_sh_ten, ShardedTensor), type(orig_sh_ten)
+    orig_sh_ten_no_data = orig_sh_ten.without_data()  # remove `data` reference
+    if sum(split_sections) != orig_sh_ten_no_data.local_shape[split_dim]:
+        raise ValueError(
+            f"Split sections must cover the whole dimension size, "
+            f"got {split_sections=} vs dimensions size "
+            f"{orig_sh_ten_no_data.local_shape[split_dim]}"
+        )
+    assert not isinstance(
+        split_sections, int
+    ), "Splitting into predefined section sizes is supported (`split_sections` must be a list)"
+    assert len(split_sections) == len(split_names), (len(split_sections), len(split_names))
+    @torch.no_grad()
+    def sh_ten_build_fn(
+        key: str, t: torch.Tensor, replica_id: ReplicaId, flattened_range: Optional[slice]
+    ):
+def _check_mamba_sequence_packing_support(
+    for_inference_not_training: bool = True,
+) -> Tuple[bool, Optional[str]]:
+    """Checks whether `causal_conv1d` and `mamba_ssm` support sequence packing."""
+    if for_inference_not_training:
+        # https://github.com/Dao-AILab/causal-conv1d/commit/d87608f78f87d1288a7821d9e6ff4b10a8d5bf07
+        conv1d_min = "1.5.3.post1"
+        # https://github.com/state-spaces/mamba/commit/4f77d5306e19f5c7ae37665a44c3e61e24cafcb5
+        mamba_min = "2.2.6.post3"
+    else:
+        conv1d_min = "1.4.0"
+        mamba_min = "2.0.0"
+    if not is_causal_conv1d_min_version(conv1d_min):
+
+third_party/Megatron-LM/megatron/core/resharding/execution.py
+def execute_reshard_plan(
+    plan: ReshardPlan,
+    src_module: torch.nn.Module,
+    dst_module: torch.nn.Module,
+    service: CopyService,
 ) -> None:
-    """Save block of chunked tokens to disk. These blocks are later used for
-    training and adding to the vector index.
+    """
+    Execute a reshard plan (from centralized controller).
+    A communication service must be provided to abstract transport.
+    Expected service API: submit_send(tensor, dest_rank), submit_recv(tensor, src_rank), run().
+    Supports None for src_module and/or dst_module to allow ranks in non-collocated mode:
+    - src_module=None: Rank only receives data (destination-only)
+    - dst_module=None: Rank only sends data (source-only)
+    - Both provided: Rank participates in both send and recv (collocated mode)
+    """
+    # Extract parameters from models if present
+    src_params = {}
+    dst_params = {}
+    if src_module is not None:
+        src_params = {name: p for name, p in src_module.named_parameters(recurse=True)}
+    if dst_module is not None:
+        dst_params = {name: p for name, p in dst_module.named_parameters(recurse=True)}
+    submit_send_with_id = getattr(service, "submit_send_with_id", None)
+    submit_recv_with_id = getattr(service, "submit_recv_with_id", None)
+    # Submit sends (only if we have source model)
+    for op in plan.send_ops:
+        src_param = src_params.get(op.param_name)
+        if src_param is not None:
+            src_view = src_param.data[op.my_slice].contiguous()
+            if submit_send_with_id is not None and op.task_id is not None:
+                submit_send_with_id(op.task_id, src_view, op.peer_rank)
+            else:
+                service.submit_send(src_view, op.peer_rank)
+    # Submit recvs (only if we have destination model)
+    recv_writebacks: List[Tuple[torch.Tensor, torch.nn.Parameter, tuple[slice, ...]]] = []
+    for op in plan.recv_ops:
+        dst_param = dst_params.get(op.param_name)
+        if dst_param is not None:
+            dst_slice_view = dst_param.data[op.my_slice]
+            recv_buffer = torch.empty_like(dst_slice_view.contiguous())
+            if submit_recv_with_id is not None and op.task_id is not None:
+                submit_recv_with_id(op.task_id, recv_buffer, op.peer_rank)
+            else:
+                service.submit_recv(recv_buffer, op.peer_rank)
+            recv_writebacks.append((recv_buffer, dst_param, op.my_slice))
+    # Execute
+    logger.info(f"Executing {len(plan.send_ops)} sends + {len(plan.recv_ops)} recvs")
+    service.run()
+    dist.barrier()
+    # Write back received buffers into their destination parameter slices
+    for recv_buffer, dst_param, dst_slice in recv_writebacks:
+        with torch.no_grad():
+
+third_party/Megatron-LM/megatron/core/distributed/fsdp/src/megatron_fsdp/fully_shard.py
+def experimental_api(func: Callable) -> Callable:
+    """
+    Mark a function or class as experimental API in Megatron CI/CD.
+    TODO(@cspades):
+def fully_shard_model(
+    module: torch.nn.Module,
+    device_mesh: Optional[DeviceMesh] = None,
+    dp_shard_dim: Optional[str] = None,
+    dp_outer_dim: Optional[str] = None,
+    tp_dim: Optional[str] = None,
+    hybrid_fsdp_group: Optional[torch.distributed.ProcessGroup] = None,
+    hybrid_fsdp_expt_group: Optional[torch.distributed.ProcessGroup] = None,
+    expt_device_mesh: Optional[DeviceMesh] = None,
+    fsdp_unit_modules: Optional[Sequence[Type[torch.nn.Module]] | Sequence[str]] = None,
+    zero_dp_strategy: str | int = 3,
+    outer_dp_sharding_strategy: str | int = 0,
+    device: Optional[torch.device] = None,
+    init_model_with_meta_device: bool = False,
+    grad_reduce_in_fp32: bool = False,
+    preserve_fp32_weights: bool = True,
+    overlap_grad_reduce: bool = True,
+    overlap_param_gather: bool = True,
+    sync_model_each_microbatch: bool = True,
+    preproc_state_dict_for_dcp_ckpt: bool = True,
+    check_for_nan_in_grad: bool = True,
+    average_in_collective: bool = False,
+    disable_bucketing: bool = False,
+    calculate_per_token_loss: bool = False,
+    keep_fp8_transpose_cache: bool = False,
+    nccl_ub: bool = False,
+    fsdp_double_buffer: bool = False,
+    fsdp_db_use_persist_buf_on_alloc_fail: bool = False,
+    disable_symmetric_registration: bool = False,
+    enable_fine_grained_param_gather: bool = False,
+) -> torch.nn.Module:
+    """
+    Fully-shard the model for Megatron-FSDP. This wraps the model in a MegatronFSDP
+    class that schedules the sharding lifecycle of the model parameters and gradients
+    during training and inference.
+    The original `torch.nn.Module` can be accessed at `MegatronFSDP.module`.
     Args:
-        block (dict):
-def build_individual_db(
-    config: RetroPreprocessingConfig, dataset_idx: int, n_datasets: int, dataset_info: dict
+        module (torch.nn.Module):
+def fully_shard_optimizer(
+    optimizer: torch.optim.Optimizer, preproc_state_dict_for_dcp_ckpt: bool = True
+) -> torch.optim.Optimizer:
+    """
+    Fully shard the optimizer for Megatron-FSDP. This is an in-place operation on the optimizer
+    instance, which modifies the optimizer to call methods exposed by the MegatronFSDP model API.
+    The optimizer should be registered on the MegatronFSDP distributed model parameters:
+    ```
+        # Fully-shard the model.
+        mfsdp_model = fully_shard_model(model, ...)
+        # Register the fully-sharded parameters with the optimizer.
+        # Use MegatronFSDP._replace_param_with_distributed_if_needed()
+        # to swap to the distributed optimizer state parameters.
+        optimizer = fully_shard_optimizer(Adam(params=mfsdp_model.parameters()))
+    ```
+    Args:
+        optimizer (torch.optim.Optimizer):
+
+third_party/Megatron-LM/megatron/core/ssm/mamba_hybrid_layer_allocation.py
+def parse_hybrid_pattern(pattern: Optional[str]) -> ParsedHybridPattern:
+    """Parse a unified hybrid pattern string into main and MTP components.
+    The pattern uses "/" as a separator between the main decoder pattern and
+    MTP patterns. Each MTP pattern after the separator represents one prediction
+    depth.
+    Format: "<main_pattern>/<mtp_pattern>/<mtp_pattern>/..."
+    Args:
+        pattern: Unified pattern string, e.g., "M*M*/MM/MM" or just "M*M*"
+    Returns:
+        ParsedHybridPattern with main_pattern, mtp_pattern, and mtp_num_depths
+    Raises:
+        ValueError: If MTP patterns are inconsistent (all must be identical)
+        ValueError: If pattern contains invalid layer symbols
+    Examples:
+        >>> parse_hybrid_pattern("M*M*")
+        ParsedHybridPattern(main_pattern="M*M*", mtp_pattern=None, mtp_num_depths=0)
+        >>> parse_hybrid_pattern("M*M*/MM/MM")
+        ParsedHybridPattern(main_pattern="M*M*", mtp_pattern="MM", mtp_num_depths=2)
+        >>> parse_hybrid_pattern("MMMM/*M/*M/*M")
+        ParsedHybridPattern(main_pattern="MMMM", mtp_pattern="*M", mtp_num_depths=3)
+    """
+    if pattern is None:
+        return ParsedHybridPattern(main_pattern=None, mtp_pattern=None, mtp_num_depths=0)
+    parts = pattern.split(Symbols.MTP_SEPARATOR)
+    if len(parts) == 1:
+        # No MTP separator found - pattern is main decoder only
+        main_pattern = parts[0]
+        _validate_pattern(main_pattern, "main")
+        return ParsedHybridPattern(main_pattern=main_pattern, mtp_pattern=None, mtp_num_depths=0)
+    # First part is main decoder pattern
+    main_pattern = parts[0]
+    if main_pattern:
+        _validate_pattern(main_pattern, "main")
+    # Remaining parts are MTP patterns (one per depth)
+    mtp_parts = parts[1:]
+    if not mtp_parts or all(p == "" for p in mtp_parts):
+def _validate_pattern(pattern: str, pattern_name: str) -> None:
+    """Validate that a pattern contains only valid layer symbols.
+    Args:
+        pattern: Layer pattern string to validate
+        pattern_name: Name of pattern for error messages (e.g., "main" or "MTP")
+    Raises:
+        ValueError: If pattern contains invalid symbols
+    """
+    for char in pattern:
+        if char not in Symbols.VALID:
+            raise ValueError(
+                f"In {pattern_name} pattern, '{char}' is not a valid layer symbol. "
+                f"Valid symbols are: {Symbols.VALID}"
+            )
+def _allocate_auto(
+    total_layers_count: int, target_attention_ratio: float, target_mlp_ratio: float
+) -> list:
+    # First, allocate attention (evenly spaced, starting and ending with mamba)
+    attention_layers_count: int = round(total_layers_count * target_attention_ratio)
+    mamba_layers_count: int = total_layers_count - attention_layers_count
+    mamba_sections_count: int = attention_layers_count + 1
+    mamba_section_length: float = mamba_layers_count / mamba_sections_count
+    layer_type_list = [Symbols.MAMBA] * total_layers_count
+    x: float = mamba_section_length
+    for l in range(total_layers_count):
+def _allocate_override(total_layers_count: int, override_pattern: str) -> list:
+    layer_type_list = list(override_pattern)
+    override_pattern_length = len(layer_type_list)
+    if override_pattern_length != total_layers_count:
+        raise ValueError(
+            "The hybrid override pattern is the wrong "
+            f"length: got {override_pattern_length}, expected "
+            f"{total_layers_count}"
+        )
+    for l in layer_type_list:
+        if l not in Symbols.VALID:
+            raise ValueError(f"In hybrid override pattern, '{l}' is not one of {Symbols.VALID}")
+    return layer_type_list
+def _layer_counts_match(a: list, b: list) -> bool:
+    for s in Symbols.VALID:
+        if a.count(s) != b.count(s):
+def allocate_layers(
+    total_layers_count: int,
+    target_attention_ratio: float,
+    target_mlp_ratio: float,
+    override_pattern: str = None,
+    silent: bool = False,
+) -> list:
+    """Allocates layers according to the requested distribution of layer types."""
+    assert total_layers_count > 0
+    assert target_attention_ratio >= 0.0 and target_attention_ratio <= 1.0
+    assert target_mlp_ratio >= 0.0 and target_mlp_ratio <= 1.0
+    assert target_attention_ratio + target_mlp_ratio <= 1.0
+    maybe_log_single_rank = (lambda *args, **kwargs: None) if silent else log_single_rank
+    # Note: target_mamba_ratio = 1.0 - target_attention_ratio - target_mlp_ratio
+    layer_type_list = _allocate_auto(total_layers_count, target_attention_ratio, target_mlp_ratio)
+    if override_pattern is not None:
+        layer_type_list_override = _allocate_override(total_layers_count, override_pattern)
+        maybe_log_single_rank(logger, logging.INFO, "Using hybrid override pattern")
+        if (target_attention_ratio > 0.0 or target_mlp_ratio > 0.0) and not _layer_counts_match(
+            layer_type_list_override, layer_type_list
+        ):
+def get_layer_maps_from_layer_type_list(
+    layer_type_list: List[str],
+) -> Tuple[Dict[int, int], Dict[int, int], Dict[int, int]]:
+    """
+    Returns maps from global layer index to the corresponding layer index
+    for each layer type in [Attention, Mamba, MLP, MoE] given a layer type list.
+    """
+    layer_types = [Symbols.ATTENTION, Symbols.MAMBA, Symbols.MLP, Symbols.MOE]
+    layer_maps = {layer_type: {} for layer_type in layer_types}
+    for global_layer_idx, layer_type in enumerate(layer_type_list):
+
+third_party/Megatron-LM/megatron/core/inference/communication/torch_symm_triton/multimem_asm.py
+def ld_128(ptr, mask, multicast_op: tl.constexpr):
+def st_128(ptr, x, y, z, w, mask, multicast_op):
+def add_v8_bf16_from_u32(
+    a0,
+    a1,
+    a2,
+    a3,  # First vector of 8 bf16s, packed in 4 uint32s
+    b0,
+    b1,
+    b2,
+    b3,  # Second vector of 8 bf16s, packed in 4 uint32s
+):
+def asm_rsqrt(x, eps):
+
+third_party/Megatron-LM/megatron/core/inference/communication/torch_symm_triton/fused_collectives.py
+def unpack_bf16x2(x, mask):
+def sum_sq(x, y, z, w, mask):
+def apply_norm(x, y, z, w, wx, wy, wz, ww, rrms, mask):
+def _multimem_reduce_scatter_residual_add_kernel(
+    residual_output_ptr,
+    residual_input_ptr,
+    rms_norm_weights_ptr,
+    multicast_ptr,  # points to symmetric memory buffer
+    signal_pad_ptrs,
+    num_tokens,
+    eps,
+    HIDDEN_SIZE: tl.constexpr,
+    BLOCK_SIZE: tl.constexpr,
+    NUMEL_PER_THREAD: tl.constexpr,
+    RANK: tl.constexpr,
+    WORLD_SIZE: tl.constexpr,
+):
+
+third_party/Megatron-LM/megatron/core/inference/communication/torch_symm_triton/barrier.py
+def _send_signal(addrs, sem: tl.constexpr):
+def _wait_signal(addrs, sem: tl.constexpr):
+def symm_mem_sync(
+    signal_pad_ptrs,
+    block_id,
+    rank: tl.constexpr,
+    world_size: tl.constexpr,
+    hasPreviousMemAccess: tl.constexpr = False,
+    hasSubsequentMemAccess: tl.constexpr = False,
+):
+
+third_party/Megatron-LM/megatron/core/inference/communication/torch_symm_triton/utils.py
+def get_tid():
+def get_ntid():
+def get_flat_tid():
+def get_flat_bid():
+def sync_threads():
+
+third_party/Megatron-LM/megatron/core/inference/communication/torch_symm_triton/collectives.py
+def _multimem_all_gather_kernel(
+    local_ptr,
+    multicast_ptr,
+    signal_pad_ptrs,
+    numel,
+    BLOCK_SIZE: tl.constexpr,
+    NUMEL_PER_THREAD: tl.constexpr,
+    RANK: tl.constexpr,
+    WORLD_SIZE: tl.constexpr,
+):
+def multimem_all_gather(
+    output_tensor: torch.Tensor,
+    input_tensor: torch.Tensor,
+    symm_mem_hdl: _SymmetricMemory,
+    **kwargs,
+) -> torch.Tensor:
+    """
+    Calls a multicast all-gather triton kernel on the given tensor.
+    Output tensor must be a symmetric memory buffer.
+    Input tensor can be a regular torch tensor
+    Arguments:
+        output_tensor: torch.Tensor - output tensor to be all-gathered into
+        input_tensor: torch.Tensor - input tensor to be all-gathered from
+        symm_mem_hdl: _SymmetricMemory - handle to the symmetric memory buffer for output_tensor
+    Returns:
+        torch.Tensor - all-gathered tensor, which is output_tensor
+    """
+    assert HAVE_TRITON, "Triton is required for multimem all-gather."
+    config = {
+        "max_num_blocks": kwargs.get("max_num_blocks", 24),
+        "num_warps": kwargs.get("num_warps", 32),
+        "BLOCK_SIZE": kwargs.get("BLOCK_SIZE", 1024),
+    }
+    assert input_tensor.dtype == torch.bfloat16, "Only bfloat16 is supported for now."
+    assert output_tensor.dtype == torch.bfloat16, "Only bfloat16 is supported for now."
+    numel_per_thread = 128 // (input_tensor.element_size() * 8)
+    assert (
+        output_tensor.numel() % numel_per_thread == 0
+    ), "The number of elements must be 128-bit aligned."
+    num_threads = triton.cdiv(output_tensor.numel() // numel_per_thread, symm_mem_hdl.world_size)
+    num_blocks = min(triton.cdiv(num_threads, config["BLOCK_SIZE"]), config["max_num_blocks"])
+    _multimem_all_gather_kernel[(num_blocks, 1, 1)](
+        input_tensor.data_ptr(),
+        symm_mem_hdl.multicast_ptr,
+        symm_mem_hdl.signal_pad_ptrs_dev,
+        numel=output_tensor.numel(),
+        BLOCK_SIZE=config["BLOCK_SIZE"],
+        NUMEL_PER_THREAD=numel_per_thread,
+        RANK=symm_mem_hdl.rank,
+        WORLD_SIZE=symm_mem_hdl.world_size,
+        num_warps=config["num_warps"],
+    )
+    return output_tensor
+@triton.jit
+def _multimem_reduce_scatter_kernel(
+    local_ptr,
+    multicast_ptr,
+    signal_pad_ptrs,
+    numel,
+    BLOCK_SIZE: tl.constexpr,
+    NUMEL_PER_THREAD: tl.constexpr,
+    RANK: tl.constexpr,
+    WORLD_SIZE: tl.constexpr,
+):
+def multimem_reduce_scatter(
+    output_tensor: torch.Tensor,
+    input_tensor: torch.Tensor,
+    symm_mem_hdl: _SymmetricMemory,
+    **kwargs,
+) -> torch.Tensor:
+    """
+    Calls a multicast reduce-scatter triton kernel on the given tensor.
+    Input tensor must be a symmetric memory buffer.
+    Output tensor can be a regular torch tensor
+    Arguments:
+        output_tensor: torch.Tensor - output tensor to be reduce-scattered into
+        input_tensor: torch.Tensor - input tensor to be reduce-scattered from
+        symm_mem_hdl: _SymmetricMemory - handle to the symmetric memory buffer for input_tensor
+        **kwargs: Additional keyword arguments for kernel configuration:
+            max_num_blocks (int, optional):
+
+third_party/Megatron-LM/megatron/core/parallel_state.py
+def get_nccl_options(pg_name, nccl_comm_cfgs):
+def update_pg_timeout(
+    timeout: timedelta, pg: Optional[torch._C._distributed_c10d.ProcessGroup] = None
+):
+def create_group(
+    ranks=None,
+    timeout=None,
+    backend=None,
+    pg_options=None,
+    use_local_synchronization=False,
+    group_desc=None,
+):
+def generate_masked_orthogonal_rank_groups(
+    world_size: int, parallel_size: List[int], mask: List[bool]
+) -> List[List[int]]:
+    r"""Generate orthogonal parallel groups based on the parallel size and mask.
+    Arguments:
+        world_size (int):
+def create_hierarchical_groups(
+    rank,
+    ranks,
+    hierarchical_group_sizes,
+    create_gloo_process_groups=False,
+    pg_options=None,
+    timeout=None,
+    group_desc=None,
+):
+def create_hybrid_dp_cp_groups(rank, ranks, pg_options):
+def default_embedding_ranks(pp_ranks):
+def default_position_embedding_ranks(pp_ranks):
+def overwrite_nccl_comm_cfgs(nccl_comm_cfgs, pg_name, key_value_pair):
+def initialize_model_parallel(
+    tensor_model_parallel_size: int = 1,
+    pipeline_model_parallel_size: int = 1,
+    virtual_pipeline_model_parallel_size: Optional[int] = None,
+    pipeline_model_parallel_comm_backend: Optional[str] = None,
+    use_sharp: bool = False,
+    context_parallel_size: int = 1,
+    hierarchical_context_parallel_sizes: Optional[List[int]] = None,
+    hybrid_context_parallel: bool = False,
+    expert_model_parallel_size: int = 1,
+    num_distributed_optimizer_instances: int = 1,
+    expert_tensor_parallel_size: Optional[int] = None,
+    nccl_communicator_config_path: Optional[str] = None,
+    distributed_timeout_minutes: int = 30,
+    order: str = "tp-cp-ep-dp-pp",
+    get_embedding_ranks: Optional[Callable[[List[int], Optional[int]], List[int]]] = None,
+    get_position_embedding_ranks: Optional[Callable[[List[int], Optional[int]], List[int]]] = None,
+    create_gloo_process_groups: bool = True,
+    high_priority_stream_groups: Optional[List[str]] = None,
+    sharp_enabled_group: Optional[str] = None,
+    create_all_gather_group: Optional[bool] = False,
 ) -> None:
-    """Process a single indexed dataset & extract chunks.
+    """Initialize model data parallel groups.
     Args:
-        config (RetroPreprocessingConfig):
-def build_individual_dbs(
-    config: RetroPreprocessingConfig, indexed_dataset_infos: List[Dict]
-) -> None:
-    """Iterate each indexed dataset & process its chunks.
-    Args:
-        config (RetroPreprocessingConfig):
-def update_chunk_counts(
-    config: RetroPreprocessingConfig, indexed_dataset_infos: List[Dict]
-) -> None:
-    """Set n_chunks_train & n_chunks sampled for each individual DB.
-    Args:
-        config (RetroPreprocessingConfig):
-def merge_dbs(project_dir: str, indexed_dataset_infos: List[Dict], db_type: str) -> None:
-    """Merge individual DBs into single DB.
-    Args:
-        project_dir (str):
-def build_merged_dbs(project_dir: str, indexed_dataset_infos: List[Dict]) -> None:
-    """Merge individual dataset components into single database.
-    This method merges databases for DB types:
-    - 'sampled': used for training the vector index.
-    - 'train': used for adding to the trained vector index.
-    - 'valid': can be used for validating/testing the vector index.
-    Args:
-        project_dir (str):
-def build_db(config: RetroPreprocessingConfig) -> None:
-    """Extract token chunks from each indexed dataset.
-    Iterate each document of each indexed dataset, extract that document's chunks,
-        and save to a 'DB' (hdf5 file).
-    Args:
-        config (RetroPreprocessingConfig):
+        tensor_model_parallel_size (int, default = 1):
+def is_initialized():
+def is_unitialized() -> bool:
+    """Check if parallel state has been initialized
+    Deprecated. Use is_initialized instead.
+    """
+    warnings.warn("is_unitialized is deprecated, use is_initialized instead", DeprecationWarning)
+    return not is_initialized()
+def model_parallel_is_initialized():
+def get_model_parallel_group(check_initialized=True):
+def get_tensor_model_parallel_group(check_initialized=True):
+def get_pipeline_model_parallel_group(check_initialized=True):
+def get_data_parallel_group(
+    with_context_parallel=False, partial_data_parallel=False, independent_all_gather=False
+):
+def has_separate_all_gather_group() -> bool:
+    """Check if a separate all-gather process group has been created.
+    Returns True if a dedicated all-gather process group exists for improved
+    communication overlap, False otherwise.
+    """
+    return _DATA_PARALLEL_GROUP_WITH_CP_AG is not None
+def get_data_parallel_group_gloo(with_context_parallel=False, partial_data_parallel=False):
+def get_context_parallel_group(check_initialized=True):
+def get_context_parallel_global_ranks(check_initialized=True):
+def get_hierarchical_context_parallel_groups(check_initialized=True):
+def get_hybrid_data_context_parallel_groups(check_initialized=True, group_size=None):
+def get_embedding_group(check_initialized=True):
+def get_position_embedding_group(check_initialized=True):
+def get_amax_reduction_group(with_context_parallel=False, tp_only_amax_red=False):
+def get_tensor_and_data_parallel_group(check_initialized=True, with_context_parallel=False):
+def get_tensor_and_context_parallel_group(check_initialized=True):
+def set_tensor_model_parallel_world_size(world_size):
+def set_pipeline_model_parallel_world_size(world_size):
+def set_virtual_pipeline_model_parallel_world_size(world_size):
+def get_tensor_model_parallel_world_size():
+def get_pipeline_model_parallel_world_size():
+def set_tensor_model_parallel_rank(rank):
+def set_pipeline_model_parallel_rank(rank):
+def get_tensor_model_parallel_rank():
+def get_pipeline_model_parallel_rank():
+def is_pipeline_first_stage(ignore_virtual=True, vp_stage=None):
+def is_pipeline_last_stage(ignore_virtual=True, vp_stage=None):
+def is_rank_in_embedding_group(ignore_virtual=True, vp_stage=None):
+def is_rank_in_position_embedding_group():
+def get_virtual_pipeline_model_parallel_rank():
+def set_virtual_pipeline_model_parallel_rank(rank):
+def get_virtual_pipeline_model_parallel_world_size():
+def get_tensor_model_parallel_src_rank():
+def get_model_parallel_src_rank():
+def get_data_parallel_src_rank(with_context_parallel=False):
+def get_pipeline_model_parallel_first_rank():
+def get_pipeline_model_parallel_last_rank():
+def get_pipeline_model_parallel_next_rank():
+def get_pipeline_model_parallel_prev_rank():
+def get_data_parallel_world_size(with_context_parallel=False, partial_data_parallel=False):
+def set_data_parallel_rank(rank):
+def get_data_parallel_rank(with_context_parallel=False, partial_data_parallel=False):
+def get_context_parallel_world_size():
+def get_context_parallel_rank():
+def get_tensor_and_context_parallel_world_size():
+def get_tensor_and_context_parallel_rank():
+def get_expert_model_parallel_group(check_initialized=True):
+def get_expert_model_parallel_src_rank():
+def get_expert_model_parallel_world_size():
+def set_expert_model_parallel_world_size(world_size):
+def get_expert_model_parallel_rank():
+def set_expert_model_parallel_rank(rank):
+def get_expert_tensor_parallel_group(check_initialized=True):
+def get_expert_tensor_parallel_world_size():
+def set_expert_tensor_parallel_world_size(world_size):
+def get_expert_tensor_parallel_rank():
+def set_expert_tensor_parallel_rank(rank):
+def get_expert_tensor_and_model_parallel_group(check_initialized=True):
+def get_expert_tensor_and_model_parallel_world_size():
+def get_expert_tensor_and_model_parallel_rank():
+def get_expert_tensor_model_pipeline_parallel_group(check_initialized=True):
+def get_expert_data_parallel_group(check_initialized=True, partial_expert_data_parallel=False):
+def get_data_modulo_expert_parallel_group(partial_expert_data_parallel=False):
+def get_expert_data_parallel_group_gloo(partial_expert_data_parallel=False):
+def get_expert_data_parallel_rank(partial_expert_data_parallel=False):
+def get_expert_data_parallel_world_size(partial_expert_data_parallel=False):
+def get_intra_distributed_optimizer_instance_group(check_initialized=True):
+def get_inter_distributed_optimizer_instance_group(check_initialized=True):
+def _set_global_memory_buffer():
+def _set_global_symmetric_memory_buffer():
+def get_global_memory_buffer():
+def get_global_symmetric_memory_buffer():
+def destroy_global_memory_buffer():
+def destroy_global_symmetric_memory_buffer():
+def get_all_ranks():
+def destroy_model_parallel():
